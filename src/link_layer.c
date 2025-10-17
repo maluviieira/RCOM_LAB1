@@ -138,6 +138,7 @@ int llopen(LinkLayer connectionParameters)
             printf("%d bytes written to serial port\n", bytes);
             printf("UA sent.\n");
             sleep(1);
+            return 0;
         }
     }
 
