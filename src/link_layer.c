@@ -9,20 +9,29 @@
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
+#define FLAG 0x7E
+#define ESC 0x7D
+#define A 0x03
+#define C_UA 0x07
+#define C_SET 0x03
+#define BCC_SET (A ^ C_SET)
+#define BCC_UA (A ^ C_UA)
+
 unsigned char UA[5] = {
-    0x7E, // FLAG
-    0x03, // Access
-    0x07, // Control
-    0x04, // BCC -- A XOR C = 0x03 XOR 0x07
-    0x7E  // FLAG
+    FLAG,
+    A,
+    C_UA,
+    BCC_UA,
+    FLAG
 };
 
 unsigned char SET[5] = {
-    0x7E,
-    0x03,
-    0x03,
-    0x00,
-    0x7E};
+    FLAG,
+    A,
+    C_SET,
+    BCC_SET,
+    FLAG
+};
 
 volatile int timeoutFlag = 0;
 void alarmHandler(int signal)
@@ -62,7 +71,7 @@ int llopen(LinkLayer connectionParameters)
             switch (step)
             {
             case 0: // start
-                if (byte == 0X7E)
+                if (byte == FLAG)
                 {
                     step = 1;
                 }
@@ -72,11 +81,11 @@ int llopen(LinkLayer connectionParameters)
                 }
                 break;
             case 1: // flag step
-                if (byte == 0x03)
+                if (byte == A)
                 {
                     step = 2;
                 }
-                else if (byte == 0x7E)
+                else if (byte == FLAG)
                 {
                     step = 1;
                 }
@@ -86,11 +95,11 @@ int llopen(LinkLayer connectionParameters)
                 }
                 break;
             case 2: // A step
-                if (byte == 0x03)
+                if (byte == C_SET)
                 {
                     step = 3;
                 }
-                else if (byte == 0x7E)
+                else if (byte == FLAG)
                 {
                     step = 1;
                 }
@@ -100,11 +109,11 @@ int llopen(LinkLayer connectionParameters)
                 }
                 break;
             case 3: // C step
-                if (byte == 0x00)
+                if (byte == BCC_SET)
                 {
                     step = 4;
                 }
-                else if (byte == 0x7E)
+                else if (byte == FLAG)
                 {
                     step = 1;
                 }
@@ -114,7 +123,7 @@ int llopen(LinkLayer connectionParameters)
                 }
                 break;
             case 4: // BCC step
-                if (byte == 0x7E)
+                if (byte == FLAG)
                 {
                     printf("Received the whole SET. Stop reading from serial port.\n");
                     STOP = TRUE;
@@ -162,7 +171,6 @@ int llopen(LinkLayer connectionParameters)
             int bytes = writeBytesSerialPort(SET, 5);
             printf("%d bytes written to serial port\n", bytes);
 
-
             timeoutFlag = 0;
             alarm(connectionParameters.timeout);
 
@@ -177,7 +185,7 @@ int llopen(LinkLayer connectionParameters)
                 switch (step)
                 {
                 case 0: // start
-                    if (byte == 0X7E)
+                    if (byte == FLAG)
                     {
                         step = 1;
                     }
@@ -187,11 +195,11 @@ int llopen(LinkLayer connectionParameters)
                     }
                     break;
                 case 1: // flag step
-                    if (byte == 0x03)
+                    if (byte == A)
                     {
                         step = 2;
                     }
-                    else if (byte == 0x7E)
+                    else if (byte == FLAG)
                     {
                         step = 1;
                     }
@@ -201,11 +209,11 @@ int llopen(LinkLayer connectionParameters)
                     }
                     break;
                 case 2: // A step
-                    if (byte == 0x07)
+                    if (byte == C_UA)
                     {
                         step = 3;
                     }
-                    else if (byte == 0x7E)
+                    else if (byte == FLAG)
                     {
                         step = 1;
                     }
@@ -215,11 +223,11 @@ int llopen(LinkLayer connectionParameters)
                     }
                     break;
                 case 3: // C step
-                    if (byte == 0x04)
+                    if (byte == BCC_UA)
                     {
                         step = 4;
                     }
-                    else if (byte == 0x7E)
+                    else if (byte == FLAG)
                     {
                         step = 1;
                     }
@@ -229,7 +237,7 @@ int llopen(LinkLayer connectionParameters)
                     }
                     break;
                 case 4: // BCC step
-                    if (byte == 0x7E)
+                    if (byte == FLAG)
                     {
                         printf("Received the whole UA. Stop reading from serial port.\n");
                         alarm(0);
