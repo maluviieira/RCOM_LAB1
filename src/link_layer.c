@@ -173,7 +173,7 @@ int llopen(LinkLayer connectionParameters)
             case 4: // BCC step
                 if (byte == FLAG)
                 {
-                    printf("Received the whole SET. Stop reading from serial port.\n");
+                    printf("Received the whole SET. Connection active here!\n");
                     STOP = TRUE;
                     SUCCESS = TRUE;
                 }
@@ -288,7 +288,7 @@ int llopen(LinkLayer connectionParameters)
                 case 4: // BCC step
                     if (byte == FLAG)
                     {
-                        printf("Received the whole UA. Stop reading from serial port.\n");
+                        printf("Received the whole UA. Connection active here!\n");
                         alarm(0);
                         connection_active = 1;
                         return 0;
