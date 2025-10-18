@@ -11,11 +11,23 @@
 
 #define FLAG 0x7E
 #define ESC 0x7D
+
 #define A 0x03
+
 #define C_UA 0x07
 #define C_SET 0x03
+#define C_RR0 0xAA
+#define C_RR1 0xAB
+#define C_REJ0 0x54
+#define C_REJ1 0x55
+
 #define BCC_SET (A ^ C_SET)
 #define BCC_UA (A ^ C_UA)
+#define BCC1_RR0 (A ^ C_RR0)
+#define BCC1_RR1 (A ^ C_RR1)
+#define BCC1_REJ0 (A ^ C_REJ0)
+#define BCC1_REJ1 (A ^ C_REJ1)
+
 
 unsigned char UA[5] = {
     FLAG,
@@ -33,10 +45,15 @@ unsigned char SET[5] = {
     FLAG
 };
 
+unsigned char RR0[5] = {FLAG, A, C_RR0, BCC1_RR0, FLAG};  // ACK for frame 0
+unsigned char RR1[5] = {FLAG, A, C_RR1, BCC1_RR1, FLAG};  // ACK for frame 1
+unsigned char REJ0[5] = {FLAG, A, C_REJ0, BCC1_REJ0, FLAG}; // NACK for frame 0
+unsigned char REJ1[5] = {FLAG, A, C_REJ1, BCC1_REJ1, FLAG}; // NACK for frame 1
+
 volatile int timeoutFlag = 0;
 void alarmHandler(int signal)
 {
-    timeoutFlag = 1;
+    timeoutFlag = 1; 
 }
 
 ////////////////////////////////////////////////
