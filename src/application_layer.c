@@ -18,5 +18,21 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     ll.nRetransmissions = nTries;
     ll.timeout = timeout;
 
-    llopen(ll);
+    if (llopen(ll) == 0)
+    {
+        if (ll.role == LlTx)
+        {
+            unsigned char testData[] = "Hello World!";
+            llwrite(testData, sizeof(testData));
+        }
+        else if (ll.role == LlRx)
+        {
+            unsigned char packet[256];
+            int size = llread(packet);
+            if (size > 0)
+            {
+                printf("Received: %s\n", packet);
+            }
+        }
+    }
 }

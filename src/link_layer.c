@@ -227,6 +227,7 @@ int llopen(LinkLayer connectionParameters)
             printf("%d bytes written to serial port\n", bytes);
             printf("UA sent.\n");
             sleep(1);
+            connection_active = 1;
             return 0;
         }
     }
@@ -321,6 +322,7 @@ int llopen(LinkLayer connectionParameters)
                     {
                         printf("Received the whole UA. Stop reading from serial port.\n");
                         alarm(0);
+                        connection_active = 1;
                         return 0;
                     }
                     else
@@ -471,7 +473,7 @@ int llread(unsigned char *packet)
                     step = STOP_STEP;
 
                     // send ACK
-                    if (control == C_RR0)
+                    if (control == C_I0)
                     {
                         writeBytesSerialPort(RR0, 5);
                     }
@@ -507,7 +509,7 @@ int llread(unsigned char *packet)
                     if (rcv_bcc2 == calc_bcc2)
                     { // success!
                         // send ACK
-                        if (control == C_RR0)
+                        if (control == C_I0)
                         {
                             writeBytesSerialPort(RR0, 5);
                         }
@@ -527,7 +529,7 @@ int llread(unsigned char *packet)
                     else
                     { // bcc2 error
                         // send NACK
-                        if (control == C_REJ0)
+                        if (control == C_I0)
                         {
                             writeBytesSerialPort(REJ0, 5);
                             printf("Sent REJ0 - error in frame 0\n");
