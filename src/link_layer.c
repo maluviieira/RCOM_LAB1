@@ -28,32 +28,30 @@
 #define BCC1_REJ0 (A ^ C_REJ0)
 #define BCC1_REJ1 (A ^ C_REJ1)
 
-
 unsigned char UA[5] = {
     FLAG,
     A,
     C_UA,
     BCC_UA,
-    FLAG
-};
+    FLAG};
 
 unsigned char SET[5] = {
     FLAG,
     A,
     C_SET,
     BCC_SET,
-    FLAG
-};
+    FLAG};
 
-unsigned char RR0[5] = {FLAG, A, C_RR0, BCC1_RR0, FLAG};  // ACK for frame 0
-unsigned char RR1[5] = {FLAG, A, C_RR1, BCC1_RR1, FLAG};  // ACK for frame 1
+// supervision frames
+unsigned char RR0[5] = {FLAG, A, C_RR0, BCC1_RR0, FLAG};    // ACK for frame 0
+unsigned char RR1[5] = {FLAG, A, C_RR1, BCC1_RR1, FLAG};    // ACK for frame 1
 unsigned char REJ0[5] = {FLAG, A, C_REJ0, BCC1_REJ0, FLAG}; // NACK for frame 0
 unsigned char REJ1[5] = {FLAG, A, C_REJ1, BCC1_REJ1, FLAG}; // NACK for frame 1
 
 volatile int timeoutFlag = 0;
 void alarmHandler(int signal)
 {
-    timeoutFlag = 1; 
+    timeoutFlag = 1;
 }
 
 ////////////////////////////////////////////////
@@ -285,6 +283,61 @@ int llwrite(const unsigned char *buf, int bufSize)
     // TODO: Implement this function
 
     return 0;
+}
+
+int byteStuffing(const unsigned char *input, int inputSize, char *output)
+{
+    int j = 0;
+
+    for (int i = 0; i < inputSize; i++)
+    {
+        if (input[i] == FLAG)
+        {
+            output[j++] = ESC;
+            output[j++] = FLAG ^ 0x20;
+        }
+        else if (input[i] == ESC)
+        {
+            output[j++] = ESC;
+            output[j++] = ESC ^ 0x20;
+        }
+        else
+        {
+            output[j++] = input[i];
+        }
+    }
+    return j;
+}
+
+int byteDestuffing(const unsigned char *input, int inputSize, unsigned char *output)
+{
+    int j = 0;
+    for (int i = 0; i < inputSize; i++)
+    {
+        if (input[i] == ESC)
+        {
+            i++; // skip escape byte
+            if (i < inputSize)
+            {
+                output[j++] = input[i] ^ 0x20; // recover original
+            }
+        }
+        else
+        {
+            output[j++] = input[i];
+        }
+    }
+    return j;
+}
+
+unsigned char BCC2(const unsigned char *data, int size)
+{
+    unsigned char bcc = 0;
+    for (int i = 0; i < size; i++)
+    {
+        bcc ^= data[i];
+    }
+    return bcc;
 }
 
 ////////////////////////////////////////////////
