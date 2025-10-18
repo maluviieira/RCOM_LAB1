@@ -9,7 +9,7 @@
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
-#define DESTUFF_BYTE 0x20
+#define STUFF_BYTE 0x20
 
 #define FLAG 0x7E
 #define ESC 0x7D
@@ -64,49 +64,17 @@ void alarmHandler(int signal)
 volatile int curr_seq = 0; // 0 or 1
 volatile int connection_active = 0;
 
-int byteStuffing(const unsigned char *input, int size, char *output)
+void stuffAndAddByte(unsigned char byte, unsigned char *frame, int *idx)
 {
-    int j = 0;
-
-    for (int i = 0; i < size; i++)
+    if (byte == FLAG || byte == ESC)
     {
-        if (input[i] == FLAG)
-        {
-            output[j++] = ESC;
-            output[j++] = FLAG ^ 0x20;
-        }
-        else if (input[i] == ESC)
-        {
-            output[j++] = ESC;
-            output[j++] = ESC ^ 0x20;
-        }
-        else
-        {
-            output[j++] = input[i];
-        }
+        frame[(*idx)++] = ESC;
+        frame[(*idx)++] = byte ^ STUFF_BYTE;
     }
-    return j;
-}
-
-int byteDestuffing(const unsigned char *input, int inputSize, unsigned char *output)
-{
-    int j = 0;
-    for (int i = 0; i < inputSize; i++)
+    else
     {
-        if (input[i] == ESC)
-        {
-            i++; // skip escape byte
-            if (i < inputSize)
-            {
-                output[j++] = input[i] ^ DESTUFF_BYTE; // recover original
-            }
-        }
-        else
-        {
-            output[j++] = input[i];
-        }
+        frame[(*idx)++] = byte;
     }
-    return j;
 }
 
 unsigned char BCC2(const unsigned char *data, int size)
@@ -353,37 +321,34 @@ int llwrite(const unsigned char *buf, int bufSize)
         return -1;
     }
 
-    unsigned char C = (curr_seq == 0) ? C_I0 : C_I1;
-    unsigned char bcc1 = A ^ C;
-    unsigned char bcc2 = BCC2(buf, bufSize);
-
-    // build frame
-    int frameSize = 4 + bufSize + 2; // FLAG+A+C+BCC1+ data +BCC2+FLAG
-    unsigned char frame[frameSize];
+    int maxStuffedSize = 5 + (bufSize * 2) + 2; // header + max stuffed data + BCC2 + FLAG
+    unsigned char stuffedFrame[maxStuffedSize];
     int pos = 0;
 
-    frame[pos++] = FLAG;
-    frame[pos++] = A;
-    frame[pos++] = C;
-    frame[pos++] = bcc1;
+    stuffAndAddByte(FLAG, stuffedFrame, &pos);
+    stuffAndAddByte(A, stuffedFrame, &pos);
+
+    unsigned char C = (curr_seq == 0) ? C_I0 : C_I1;
+    stuffAndAddByte(C, stuffedFrame, &pos);
+
+    unsigned char bcc1 = A ^ C;
+    stuffAndAddByte(bcc1, stuffedFrame, &pos);
 
     for (int i = 0; i < bufSize; i++)
     {
-        frame[pos++] = buf[i];
+        stuffAndAddByte(buf[i], stuffedFrame, &pos);
     }
 
-    frame[pos++] = bcc2;
-    frame[pos++] = FLAG;
+    unsigned char bcc2 = BCC2(buf, bufSize);
+    stuffAndAddByte(bcc2, stuffedFrame, &pos);
 
-    // byte stuffing
-    unsigned char stuffedFrame[frameSize * 2]; // worst case = every byte stuffed
-    int stuffedSize = byteStuffing(frame, frameSize, stuffedFrame);
+    stuffAndAddByte(FLAG, stuffedFrame, &pos);
 
     // send frame
-    int bytesWritten = writeBytesSerialPort(stuffedFrame, stuffedSize);
+    int bytesWritten = writeBytesSerialPort(stuffedFrame, pos + 1);
     printf("Sent I-frame with seq=%d, %d bytes\n", curr_seq, bytesWritten);
 
-    return bufSize;
+    return bytesWritten;
 }
 
 ////////////////////////////////////////////////
@@ -398,11 +363,10 @@ int llread(unsigned char *packet)
     }
 
     unsigned char buffer[1024];
-    int bufferPos = 0;
     int step = START_STEP;
-    int dataSize = 0;
-    unsigned char address, control, bcc1, bcc2;
     int data_index = 0;
+    unsigned char control;
+    int destuff_next = FALSE; // next byte needs destuffing
 
     while (step != STOP_STEP)
     {
@@ -411,27 +375,30 @@ int llread(unsigned char *packet)
 
         if (bytesRead > 0)
         {
-            printf("Byte received: 0x%02X, State: %d\n", byte, step);
+            printf("Byte received: 0x%02X, State: %d, Destuff?: %d \n", byte, step, destuff_next);
+
+            if (destuff_next)
+            {
+                byte = byte ^ STUFF_BYTE;
+                destuff_next = FALSE;
+                printf("Destuffed to: 0x%02X\n", byte);
+            }
+            else if (byte == ESC)
+            {
+                destuff_next = TRUE;
+                continue; // skip to next byte
+            }
 
             switch (step)
             {
             case START_STEP:
-                if (byte == FLAG)
-                {
-                    step = FLAG_STEP;
-                }
+                if (byte == FLAG) step = FLAG_STEP;
                 break;
 
             case FLAG_STEP:
-                if (byte == A)
-                {
-                    step = A_STEP;
-                }
-                else if (byte != FLAG)
-                {
-                    step = START_STEP;
-                }
-                // if byte == FLAG stay
+                if (byte == A) step = A_STEP;
+                else if (byte != FLAG) step = START_STEP;
+                // if byte == FLAG => stay
                 break;
 
             case A_STEP:
@@ -440,125 +407,68 @@ int llread(unsigned char *packet)
                     control = byte;
                     step = C_STEP;
                 }
-                else if (byte == FLAG)
-                {
-                    step = FLAG_STEP;
-                }
-                else
-                {
-                    step = START_STEP;
-                }
+                else if (byte == FLAG) step = FLAG_STEP;
+                else step = START_STEP;
+                
                 break;
 
             case C_STEP:
                 if (byte == (A ^ control))
-                { // bcc1
+                {
                     step = BCC1_STEP;
+                    data_index = 0; // reset data buffer
                 }
-                else if (byte == FLAG)
-                {
-                    step = FLAG_STEP;
-                }
-                else
-                {
-                    step = START_STEP;
-                }
+                else if (byte == FLAG) step = FLAG_STEP;
+                else step = START_STEP;
+                
                 break;
 
             case BCC1_STEP:
-                if (byte == FLAG)
-                {
-                    // empty frame
+                // store data bytes (including potential BCC2)
+                buffer[data_index++] = byte;
 
-                    step = STOP_STEP;
-
-                    // send ACK
-                    if (control == C_I0)
-                    {
-                        writeBytesSerialPort(RR0, 5);
-                    }
-                    else
-                    {
-                        writeBytesSerialPort(RR1, 5);
-                    }
-
-                    return 0;
-                }
-                else if (byte == ESC)
-                {
-                    step = FOUND_ESC_STEP;
-                }
-                else
-                {
-                    // normal data byte
-                    buffer[data_index++] = byte;
-                    step = DATA_STEP;
-                }
-                break;
-
-            case DATA_STEP:
                 if (byte == FLAG)
                 {
                     step = STOP_STEP;
 
-                    unsigned char rcv_bcc2 = buffer[data_index - 1];
-                    int actual_data_size = data_index - 1;
+                    // last stored byte before FLAG should be BCC2
+                    if (data_index >= 2)
+                    {
+                        unsigned char rcv_bcc2 = buffer[data_index - 2]; // second to last is BCC2
+                        int actual_data_size = data_index - 2; // - BCC2 - FLAG
 
-                    unsigned char calc_bcc2 = BCC2(buffer, actual_data_size);
+                        unsigned char calc_bcc2 = BCC2(buffer, actual_data_size);
 
-                    if (rcv_bcc2 == calc_bcc2)
-                    { // success!
-                        // send ACK
-                        if (control == C_I0)
+                        if (rcv_bcc2 == calc_bcc2) //BCC OK
                         {
-                            writeBytesSerialPort(RR0, 5);
+                            // send ACK
+                            if (control == C_I0) writeBytesSerialPort(RR1, 5);
+                            else writeBytesSerialPort(RR0, 5);
+
+                            // Copy data to output packet
+                            for (int i = 0; i < actual_data_size; i++)
+                            {
+                                packet[i] = buffer[i];
+                            }
+
+                            return actual_data_size;
                         }
                         else
-                        {
-                            writeBytesSerialPort(RR1, 5);
-                        }
+                        { // BCC ERROR
 
-                        // copy data from temporary buffer to output packet
-                        for (int i = 0; i < actual_data_size; i++)
-                        {
-                            packet[i] = buffer[i];
+                            // send NACK
+                            if (control == C_I0) writeBytesSerialPort(REJ0, 5);
+                            else writeBytesSerialPort(REJ1, 5);
+                        
+                            return -1;
                         }
-
-                        return actual_data_size;
                     }
                     else
-                    { // bcc2 error
-                        // send NACK
-                        if (control == C_I0)
-                        {
-                            writeBytesSerialPort(REJ0, 5);
-                            printf("Sent REJ0 - error in frame 0\n");
-                        }
-                        else
-                        {
-                            writeBytesSerialPort(REJ1, 5);
-                            printf("Sent REJ1 - error in frame 1\n");
-                        }
+                    {
+                        printf("ERROR: Frame too short\n");
                         return -1;
                     }
                 }
-                else if (byte == ESC)
-                {
-                    step = FOUND_ESC_STEP;
-                }
-                else
-                { // normal data byte
-                    buffer[data_index++] = byte;
-                }
-
-                break;
-
-            case FOUND_ESC_STEP:
-                // destuffing
-                unsigned char og_byte = byte ^ DESTUFF_BYTE;
-                buffer[data_index++] = og_byte;
-                
-                step = DATA_STEP;
                 break;
 
             default:
