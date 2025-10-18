@@ -375,7 +375,7 @@ int llread(unsigned char *packet)
 
         if (bytesRead > 0)
         {
-            printf("Byte received: 0x%02X, State: %d, Destuff?: %d \n", byte, step, destuff_next);
+            printf("Byte received: 0x%02X, Step: %d, Destuff?: %d \n", byte, step, destuff_next);
 
             if (destuff_next)
             {
