@@ -22,7 +22,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     {
         if (ll.role == LlTx)
         {
-            unsigned char testData[] = "Hello World!";
+            unsigned char testData[] = "Hello\x7EWorld!";
             llwrite(testData, sizeof(testData));
         }
         else if (ll.role == LlRx)

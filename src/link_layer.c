@@ -62,7 +62,7 @@ void alarmHandler(int signal)
 }
 
 volatile int curr_seq = 0; // 0 or 1
-volatile int connection_active = 0;
+volatile int connection_active = FALSE;
 
 void stuffAndAddByte(unsigned char byte, unsigned char *frame, int *idx)
 {
@@ -195,7 +195,7 @@ int llopen(LinkLayer connectionParameters)
             printf("%d bytes written to serial port\n", bytes);
             printf("UA sent.\n");
             sleep(1);
-            connection_active = 1;
+            connection_active = TRUE;
             return 0;
         }
     }
@@ -290,7 +290,7 @@ int llopen(LinkLayer connectionParameters)
                     {
                         printf("Received the whole UA. Connection active here!\n");
                         alarm(0);
-                        connection_active = 1;
+                        connection_active = TRUE;
                         return 0;
                     }
                     else
@@ -429,7 +429,6 @@ int llread(unsigned char *packet)
 
                 if (byte == FLAG)
                 {
-                    step = STOP_STEP;
 
                     // last stored byte before FLAG should be BCC2
                     if (data_index >= 2)
@@ -441,9 +440,11 @@ int llread(unsigned char *packet)
 
                         if (rcv_bcc2 == calc_bcc2) //BCC OK
                         {
+                            step = STOP_STEP;
+                            
                             // send ACK
-                            if (control == C_I0) writeBytesSerialPort(RR1, 5);
-                            else writeBytesSerialPort(RR0, 5);
+                            if (control == C_I0) writeBytesSerialPort(RR0, 5);
+                            else writeBytesSerialPort(RR1, 5);
 
                             // Copy data to output packet
                             for (int i = 0; i < actual_data_size; i++)
@@ -455,12 +456,7 @@ int llread(unsigned char *packet)
                         }
                         else
                         { // BCC ERROR
-
-                            // send NACK
-                            if (control == C_I0) writeBytesSerialPort(REJ0, 5);
-                            else writeBytesSerialPort(REJ1, 5);
-                        
-                            return -1;
+                            printf("FLAG in data detected, continuing...\n");
                         }
                     }
                     else
