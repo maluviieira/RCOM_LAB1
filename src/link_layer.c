@@ -14,7 +14,7 @@
 #define FLAG 0x7E
 #define ESC 0x7D
 
-#define A 0x03
+#define A 0x03      // cmds sent by the transmitter or replies sent by the Receiver
 
 #define C_UA 0x07
 #define C_SET 0x03
@@ -348,6 +348,107 @@ int llwrite(const unsigned char *buf, int bufSize)
     int bytesWritten = writeBytesSerialPort(stuffedFrame, pos + 1);
     printf("Sent I-frame with seq=%d, %d bytes\n", curr_seq, bytesWritten);
 
+    // READ SUPERVISION FRAMES
+    int step = START_STEP;
+    int res;
+    int STOP = FALSE;
+    while (STOP==FALSE)
+    {
+        unsigned char byte;
+        int nBytesBuf = 0;
+
+        int bytes = readByteSerialPort(&byte);
+        nBytesBuf += bytes;
+        printf("Byte received: %d\n", byte);
+
+        switch (step)
+        {
+        case START_STEP:
+            if (byte == FLAG) step = FLAG_STEP;
+            break;
+        case FLAG_STEP: 
+            if (byte == A)
+            {
+                step = A_STEP;
+            }
+            else
+            {
+                step = START_STEP;
+            }
+            break;
+        case A_STEP: // A step
+            if (byte == C_RR0)
+            {
+                step = C_STEP;
+                res = 0;
+            }
+            else if (byte == C_RR1){
+                step = C_STEP;
+                res = 1;
+            }
+            else if (byte == C_REJ0){
+                step = C_STEP;
+                res = 2;
+            }
+            else if (byte == C_REJ1){
+                step = C_STEP;
+                res = 3;
+            }
+            else if (byte == FLAG)
+            {
+                step = FLAG_STEP;
+            }
+            else
+            {
+                step = START_STEP;
+            }
+            break;
+        case C_STEP: 
+            if ((byte == BCC1_RR0 && res == 0) || (byte == BCC1_RR1 && res == 1) || (byte == BCC1_REJ0 && res == 2) || (byte == BCC1_REJ1 && res == 3))
+            {
+                step = BCC1_STEP;
+            }
+            else if (byte == FLAG)
+            {
+                step = FLAG_STEP;
+            }
+            else
+            {
+                step = START_STEP;
+            }
+            break;
+        case BCC1_STEP: 
+            if (byte == FLAG)
+            {
+
+                if (res == 0){
+                    printf("Received RR0\n");
+                }
+                else if (res == 1){
+                    printf("Received RR1\n");
+                }
+                else if (res == 2){
+                    printf("REJ0. Retransmit I0\n");
+                }
+                else if (res == 3){
+                    printf("REJ1. Retransmit I1\n");
+
+                }
+                STOP = TRUE;
+                alarm(0);
+                connection_active = TRUE;
+                return 0;
+            }
+            else
+            {
+                step = START_STEP;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
     return bytesWritten;
 }
 
@@ -392,12 +493,15 @@ int llread(unsigned char *packet)
             switch (step)
             {
             case START_STEP:
-                if (byte == FLAG) step = FLAG_STEP;
+                if (byte == FLAG)
+                    step = FLAG_STEP;
                 break;
 
             case FLAG_STEP:
-                if (byte == A) step = A_STEP;
-                else if (byte != FLAG) step = START_STEP;
+                if (byte == A)
+                    step = A_STEP;
+                else if (byte != FLAG)
+                    step = START_STEP;
                 // if byte == FLAG => stay
                 break;
 
@@ -407,9 +511,11 @@ int llread(unsigned char *packet)
                     control = byte;
                     step = C_STEP;
                 }
-                else if (byte == FLAG) step = FLAG_STEP;
-                else step = START_STEP;
-                
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+
                 break;
 
             case C_STEP:
@@ -418,9 +524,11 @@ int llread(unsigned char *packet)
                     step = BCC1_STEP;
                     data_index = 0; // reset data buffer
                 }
-                else if (byte == FLAG) step = FLAG_STEP;
-                else step = START_STEP;
-                
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+
                 break;
 
             case BCC1_STEP:
@@ -434,17 +542,23 @@ int llread(unsigned char *packet)
                     if (data_index >= 2)
                     {
                         unsigned char rcv_bcc2 = buffer[data_index - 2]; // second to last is BCC2
-                        int actual_data_size = data_index - 2; // - BCC2 - FLAG
+                        int actual_data_size = data_index - 2;           // - BCC2 - FLAG
 
                         unsigned char calc_bcc2 = BCC2(buffer, actual_data_size);
 
-                        if (rcv_bcc2 == calc_bcc2) //BCC OK
+                        if (rcv_bcc2 == calc_bcc2) // BCC OK
                         {
                             step = STOP_STEP;
-                            
+
                             // send ACK
-                            if (control == C_I0) writeBytesSerialPort(RR0, 5);
-                            else writeBytesSerialPort(RR1, 5);
+                            if (control == C_I0) {
+                                writeBytesSerialPort(RR0, 5);
+                                printf("Answered with RR0\n");
+                            }
+                            else {
+                                writeBytesSerialPort(RR1, 5);
+                                printf("Answered with RR1\n");
+                            }
 
                             // Copy data to output packet
                             for (int i = 0; i < actual_data_size; i++)
