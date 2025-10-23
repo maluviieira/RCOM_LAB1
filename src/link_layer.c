@@ -56,13 +56,16 @@ unsigned char DISC[5] = {FLAG, A, C_DISC, BCC_DISC, FLAG}; // DISConnect
 
 volatile int timeoutFlag = 0;
 
+
+volatile int curr_seq = 0; // 0 or 1
+volatile int connection_active = FALSE;
+
+LinkLayer connection_params;
+
 void alarmHandler(int signal)
 {
     timeoutFlag = 1;
 }
-
-volatile int curr_seq = 0; // 0 or 1
-volatile int connection_active = FALSE;
 
 void stuffAndAddByte(unsigned char byte, unsigned char *frame, int *idx)
 {
@@ -92,6 +95,9 @@ unsigned char BCC2(const unsigned char *data, int size)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
+    connection_params = connectionParameters;
+    connection_params.timeout = connectionParameters.timeout;
+    connection_params.nRetransmissions = connectionParameters.nRetransmissions;
 
     volatile int STOP = FALSE;
     volatile int SUCCESS = FALSE;
@@ -188,13 +194,13 @@ int llopen(LinkLayer connectionParameters)
         int nBytesBuf = 0;
         int step = 0;
 
-        for (int attempt = 0; attempt < connectionParameters.nRetransmissions; attempt++)
+        for (int attempt = 0; attempt < connection_params.nRetransmissions; attempt++)
         {
 
             int bytes = writeBytesSerialPort(SET, 5);
             printf("%d bytes written to serial port\n", bytes);
 
-            timeoutFlag = 0;
+            timeoutFlag = FALSE;
             alarm(connectionParameters.timeout);
 
             while (!timeoutFlag)
@@ -294,9 +300,8 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     int bytesWritten = 0;
     int retransmissions = 0;
-    int maxRetransmissions = 3;
 
-    while (retransmissions < maxRetransmissions)
+    while (retransmissions < connection_params.nRetransmissions)
     {
         // send the I frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
@@ -306,9 +311,11 @@ int llwrite(const unsigned char *buf, int bufSize)
         int step = START_STEP;
         int result_type = -1; // 0=RR0, 1=RR1, 2=REJ0, 3=REJ1
         int frame_complete = FALSE;
-        int timeout_counter = 0;
 
-        while (!frame_complete && timeout_counter < 1000) // temp timeout
+        timeoutFlag = FALSE;
+        alarm(connection_params.timeout);
+
+        while (!frame_complete && !timeoutFlag)
         {
             unsigned char byte;
             int bytes = readByteSerialPort(&byte);
@@ -432,7 +439,6 @@ int llwrite(const unsigned char *buf, int bufSize)
                     break;
                 }
             }
-            timeout_counter++;
         }
 
         retransmissions++;
