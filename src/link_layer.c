@@ -14,7 +14,7 @@
 #define FLAG 0x7E
 #define ESC 0x7D
 
-#define A 0x03      // cmds sent by the transmitter or replies sent by the Receiver
+#define A 0x03 // cmds sent by the transmitter or replies sent by the Receiver
 
 #define C_UA 0x07
 #define C_SET 0x03
@@ -118,59 +118,35 @@ int llopen(LinkLayer connectionParameters)
 
             switch (step)
             {
-            case 0: // start
+            case START_STEP:
                 if (byte == FLAG)
-                {
-                    step = 1;
-                }
-                else
-                {
-                    step = 0;
-                }
+                    step = FLAG_STEP;
                 break;
-            case 1: // flag step
+            case FLAG_STEP:
                 if (byte == A)
-                {
-                    step = 2;
-                }
+                    step = A_STEP;
                 else if (byte == FLAG)
-                {
-                    step = 1;
-                }
+                    step = FLAG_STEP;
                 else
-                {
-                    step = 0;
-                }
+                    step = START_STEP;
                 break;
-            case 2: // A step
+            case A_STEP:
                 if (byte == C_SET)
-                {
-                    step = 3;
-                }
+                    step = C_STEP;
                 else if (byte == FLAG)
-                {
-                    step = 1;
-                }
+                    step = FLAG_STEP;
                 else
-                {
-                    step = 0;
-                }
+                    step = START_STEP;
                 break;
-            case 3: // C step
+            case C_STEP:
                 if (byte == BCC_SET)
-                {
-                    step = 4;
-                }
+                    step = BCC1_STEP;
                 else if (byte == FLAG)
-                {
-                    step = 1;
-                }
+                    step = FLAG_STEP;
                 else
-                {
-                    step = 0;
-                }
+                    step = START_STEP;
                 break;
-            case 4: // BCC step
+            case BCC1_STEP:
                 if (byte == FLAG)
                 {
                     printf("Received the whole SET. Connection active here!\n");
@@ -178,9 +154,7 @@ int llopen(LinkLayer connectionParameters)
                     SUCCESS = TRUE;
                 }
                 else
-                {
-                    step = 0;
-                }
+                    step = START_STEP;
                 break;
             default:
                 break;
@@ -233,59 +207,35 @@ int llopen(LinkLayer connectionParameters)
 
                 switch (step)
                 {
-                case 0: // start
+                case START_STEP:
                     if (byte == FLAG)
-                    {
-                        step = 1;
-                    }
-                    else
-                    {
-                        step = 0;
-                    }
+                        step = FLAG_STEP;
                     break;
-                case 1: // flag step
+                case FLAG_STEP:
                     if (byte == A)
-                    {
-                        step = 2;
-                    }
+                        step = A_STEP;
                     else if (byte == FLAG)
-                    {
-                        step = 1;
-                    }
+                        step = FLAG_STEP;
                     else
-                    {
-                        step = 0;
-                    }
+                        step = START_STEP;
                     break;
-                case 2: // A step
+                case A_STEP:
                     if (byte == C_UA)
-                    {
-                        step = 3;
-                    }
+                        step = C_STEP;
                     else if (byte == FLAG)
-                    {
-                        step = 1;
-                    }
+                        step = FLAG_STEP;
                     else
-                    {
-                        step = 0;
-                    }
+                        step = START_STEP;
                     break;
-                case 3: // C step
+                case C_STEP:
                     if (byte == BCC_UA)
-                    {
-                        step = 4;
-                    }
+                        step = BCC1_STEP;
                     else if (byte == FLAG)
-                    {
-                        step = 1;
-                    }
+                        step = FLAG_STEP;
                     else
-                    {
-                        step = 0;
-                    }
+                        step = START_STEP;
                     break;
-                case 4: // BCC step
+                case BCC1_STEP:
                     if (byte == FLAG)
                     {
                         printf("Received the whole UA. Connection active here!\n");
@@ -294,9 +244,7 @@ int llopen(LinkLayer connectionParameters)
                         return 0;
                     }
                     else
-                    {
-                        step = 0;
-                    }
+                        step = START_STEP;
                     break;
                 default:
                     break;
@@ -347,7 +295,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     int bytesWritten = 0;
     int retransmissions = 0;
     int maxRetransmissions = 3;
-    
+
     while (retransmissions < maxRetransmissions)
     {
         // send the I frame
@@ -359,12 +307,12 @@ int llwrite(const unsigned char *buf, int bufSize)
         int result_type = -1; // 0=RR0, 1=RR1, 2=REJ0, 3=REJ1
         int frame_complete = FALSE;
         int timeout_counter = 0;
-        
+
         while (!frame_complete && timeout_counter < 1000) // temp timeout
         {
             unsigned char byte;
             int bytes = readByteSerialPort(&byte);
-            
+
             if (bytes > 0)
             {
                 printf("Byte received: 0x%02X\n", byte);
@@ -372,10 +320,11 @@ int llwrite(const unsigned char *buf, int bufSize)
                 switch (step)
                 {
                 case START_STEP:
-                    if (byte == FLAG) step = FLAG_STEP;
+                    if (byte == FLAG)
+                        step = FLAG_STEP;
                     break;
-                    
-                case FLAG_STEP: 
+
+                case FLAG_STEP:
                     if (byte == A)
                     {
                         step = A_STEP;
@@ -385,7 +334,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                         step = START_STEP;
                     }
                     break;
-                    
+
                 case A_STEP:
                     if (byte == C_RR0)
                     {
@@ -416,11 +365,11 @@ int llwrite(const unsigned char *buf, int bufSize)
                         step = START_STEP;
                     }
                     break;
-                    
-                case C_STEP: 
-                    if ((result_type == 0 && byte == BCC1_RR0) || 
-                        (result_type == 1 && byte == BCC1_RR1) || 
-                        (result_type == 2 && byte == BCC1_REJ0) || 
+
+                case C_STEP:
+                    if ((result_type == 0 && byte == BCC1_RR0) ||
+                        (result_type == 1 && byte == BCC1_RR1) ||
+                        (result_type == 2 && byte == BCC1_REJ0) ||
                         (result_type == 3 && byte == BCC1_REJ1))
                     {
                         step = BCC1_STEP;
@@ -434,20 +383,20 @@ int llwrite(const unsigned char *buf, int bufSize)
                         step = START_STEP;
                     }
                     break;
-                    
-                case BCC1_STEP: 
+
+                case BCC1_STEP:
                     if (byte == FLAG)
                     {
                         frame_complete = TRUE;
-                        
+
                         // response
                         if (result_type == 0) // RR0
                         {
                             printf("Received RR0 - ACK for frame 0\n");
                             if (curr_seq == 0) // success
                             {
-                                curr_seq = 1; 
-                                return bytesWritten; 
+                                curr_seq = 1;
+                                return bytesWritten;
                             }
                             else
                             {
@@ -460,7 +409,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                             if (curr_seq == 1) // success
                             {
                                 curr_seq = 0;
-                                return bytesWritten; 
+                                return bytesWritten;
                             }
                             else
                             {
@@ -475,7 +424,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                         else if (result_type == 3) // REJ1
                         {
                             printf("REJ1 received - retransmitting\n");
-                            break; 
+                            break;
                         }
                     }
                     else
@@ -483,7 +432,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                         step = START_STEP;
                     }
                     break;
-                    
+
                 default:
                     step = START_STEP;
                     break;
@@ -491,11 +440,11 @@ int llwrite(const unsigned char *buf, int bufSize)
             }
             timeout_counter++;
         }
-        
+
         retransmissions++;
         printf("Retransmission attempt %d/%d\n", retransmissions, maxRetransmissions);
     }
-    
+
     printf("Failed after %d retransmissions\n", retransmissions);
     return -1;
 }
@@ -599,11 +548,13 @@ int llread(unsigned char *packet)
                             step = STOP_STEP;
 
                             // send ACK
-                            if (control == C_I0) {
+                            if (control == C_I0)
+                            {
                                 writeBytesSerialPort(RR0, 5);
                                 printf("Answered with RR0\n");
                             }
-                            else {
+                            else
+                            {
                                 writeBytesSerialPort(RR1, 5);
                                 printf("Answered with RR1\n");
                             }
