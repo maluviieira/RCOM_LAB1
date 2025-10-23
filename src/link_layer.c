@@ -392,45 +392,39 @@ int llwrite(const unsigned char *buf, int bufSize)
                         // response
                         if (result_type == 0) // RR0
                         {
-                            printf("Received RR0 - ACK for frame 0\n");
-                            if (curr_seq == 0) // success
-                            {
-                                curr_seq = 1;
-                                return bytesWritten;
-                            }
-                            else
-                            {
-                                printf("ERROR: Sequence mismatch - sent I1 but got RR0\n");
-                            }
-                        }
-                        else if (result_type == 1) // RR1
-                        {
-                            printf("Received RR1 - ACK for frame 1\n");
+                            printf("Received RR0 - Can send I0\n");
                             if (curr_seq == 1) // success
                             {
                                 curr_seq = 0;
                                 return bytesWritten;
                             }
                             else
+                                printf("ERROR: Sequence mismatch - sent I0 but got RR0\n");
+                        }
+                        else if (result_type == 1) // RR1
+                        {
+                            printf("Received RR1 - Can send I1\n");
+                            if (curr_seq == 0) // success
                             {
-                                printf("ERROR: Sequence mismatch - sent I0 but got RR1\n");
+                                curr_seq = 1;
+                                return bytesWritten;
                             }
+                            else
+                                printf("ERROR: Sequence mismatch - sent I0 but got RR1\n");
                         }
                         else if (result_type == 2) // REJ0
                         {
-                            printf("REJ0 received - retransmitting\n");
+                            printf("REJ0 received - retransmitting I0\n");
                             break; // break inner loop to retransmit
                         }
                         else if (result_type == 3) // REJ1
                         {
-                            printf("REJ1 received - retransmitting\n");
+                            printf("REJ1 received - retransmitting I1\n");
                             break;
                         }
                     }
                     else
-                    {
                         step = START_STEP;
-                    }
                     break;
 
                 default:
@@ -534,7 +528,6 @@ int llread(unsigned char *packet)
 
                 if (byte == FLAG)
                 {
-
                     // last stored byte before FLAG should be BCC2
                     if (data_index >= 2)
                     {
@@ -550,13 +543,13 @@ int llread(unsigned char *packet)
                             // send ACK
                             if (control == C_I0)
                             {
-                                writeBytesSerialPort(RR0, 5);
-                                printf("Answered with RR0\n");
+                                writeBytesSerialPort(RR1, 5);
+                                printf("Answered with RR1. Ready to Receive I1!\n");
                             }
                             else
                             {
-                                writeBytesSerialPort(RR1, 5);
-                                printf("Answered with RR1\n");
+                                writeBytesSerialPort(RR0, 5);
+                                printf("Answered with RR0. Ready to Receive I0!\n");
                             }
 
                             // Copy data to output packet
