@@ -279,14 +279,14 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned char stuffedFrame[maxStuffedSize];
     int pos = 0;
 
-    stuffAndAddByte(FLAG, stuffedFrame, &pos);
-    stuffAndAddByte(A, stuffedFrame, &pos);
+    stuffedFrame[pos++] = FLAG;
+    stuffedFrame[pos++] = A;
 
     unsigned char C = (curr_seq == 0) ? C_I0 : C_I1;
-    stuffAndAddByte(C, stuffedFrame, &pos);
+    stuffedFrame[pos++] = C;
 
     unsigned char bcc1 = A ^ C;
-    stuffAndAddByte(bcc1, stuffedFrame, &pos);
+    stuffedFrame[pos++] = bcc1;
 
     for (int i = 0; i < bufSize; i++)
     {
@@ -296,7 +296,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned char bcc2 = BCC2(buf, bufSize);
     stuffAndAddByte(bcc2, stuffedFrame, &pos);
 
-    stuffAndAddByte(FLAG, stuffedFrame, &pos);
+    stuffedFrame[pos++] = FLAG;
 
     int bytesWritten = 0;
     int retransmissions = 0;
@@ -395,6 +395,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                     if (byte == FLAG)
                     {
                         frame_complete = TRUE;
+                        alarm(0);
 
                         // response
                         if (result_type == 0) // RR0
@@ -441,10 +442,16 @@ int llwrite(const unsigned char *buf, int bufSize)
             }
         }
 
+        if (timeoutFlag)
+        {
+            printf("TIMEOUT on attempt %d/%d - Retransmitting I%d\n", retransmissions + 1, connection_params.nRetransmissions, curr_seq);
+        }
+
         retransmissions++;
-        printf("Retransmission attempt %d/%d\n", retransmissions, maxRetransmissions);
+        
     }
 
+    alarm(0);
     printf("Failed after %d retransmissions\n", retransmissions);
     return -1;
 }
