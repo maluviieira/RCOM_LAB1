@@ -116,6 +116,8 @@ int llopen(LinkLayer connectionParameters)
         int step = 0;
         while (STOP == FALSE)
         {
+            timeoutFlag = FALSE;
+            alarm(connection_params.timeout);
             unsigned char byte;
 
             int bytes = readByteSerialPort(&byte);
@@ -155,6 +157,7 @@ int llopen(LinkLayer connectionParameters)
             case BCC1_STEP:
                 if (byte == FLAG)
                 {
+                    alarm(0);
                     printf("Received the whole SET. Connection active here!\n");
                     STOP = TRUE;
                     SUCCESS = TRUE;
@@ -191,77 +194,95 @@ int llopen(LinkLayer connectionParameters)
 
         (void)signal(SIGALRM, alarmHandler);
 
-        int nBytesBuf = 0;
-        int step = 0;
+        int retransmissions = 0;
 
-        for (int attempt = 0; attempt < connection_params.nRetransmissions; attempt++)
+        while (retransmissions < connection_params.nRetransmissions)
         {
-
+       
             int bytes = writeBytesSerialPort(SET, 5);
-            printf("%d bytes written to serial port\n", bytes);
+            printf("SET sent (%d bytes) - attempt %d/%d\n", bytes, retransmissions + 1, connection_params.nRetransmissions);
+
 
             timeoutFlag = FALSE;
-            alarm(connectionParameters.timeout);
+            alarm(connection_params.timeout);
+            
+            int step = START_STEP;
+            int frame_complete = FALSE;
 
-            while (!timeoutFlag)
+            while (!frame_complete && !timeoutFlag)
             {
                 unsigned char byte;
-
                 int bytes = readByteSerialPort(&byte);
-                nBytesBuf += bytes;
-                printf("Byte received: %d\n", byte);
 
-                switch (step)
+                if (bytes > 0)
                 {
-                case START_STEP:
-                    if (byte == FLAG)
-                        step = FLAG_STEP;
-                    break;
-                case FLAG_STEP:
-                    if (byte == A)
-                        step = A_STEP;
-                    else if (byte == FLAG)
-                        step = FLAG_STEP;
-                    else
-                        step = START_STEP;
-                    break;
-                case A_STEP:
-                    if (byte == C_UA)
-                        step = C_STEP;
-                    else if (byte == FLAG)
-                        step = FLAG_STEP;
-                    else
-                        step = START_STEP;
-                    break;
-                case C_STEP:
-                    if (byte == BCC_UA)
-                        step = BCC1_STEP;
-                    else if (byte == FLAG)
-                        step = FLAG_STEP;
-                    else
-                        step = START_STEP;
-                    break;
-                case BCC1_STEP:
-                    if (byte == FLAG)
+                    printf("Byte received: 0x%02X\n", byte);
+
+                    switch (step)
                     {
-                        printf("Received the whole UA. Connection active here!\n");
-                        alarm(0);
-                        connection_active = TRUE;
-                        return 0;
-                    }
-                    else
+                    case START_STEP:
+                        if (byte == FLAG)
+                            step = FLAG_STEP;
+                        break;
+
+                    case FLAG_STEP:
+                        if (byte == A)
+                            step = A_STEP;
+                        else if (byte != FLAG)
+                            step = START_STEP;
+                        break;
+
+                    case A_STEP:
+                        if (byte == C_UA)
+                            step = C_STEP;
+                        else if (byte == FLAG)
+                            step = FLAG_STEP;
+                        else
+                            step = START_STEP;
+                        break;
+
+                    case C_STEP:
+                        if (byte == BCC_UA)
+                            step = BCC1_STEP;
+                        else if (byte == FLAG)
+                            step = FLAG_STEP;
+                        else
+                            step = START_STEP;
+                        break;
+
+                    case BCC1_STEP:
+                        if (byte == FLAG)
+                        {
+                            frame_complete = TRUE;
+                            alarm(0); // Cancel alarm
+                            printf("Received UA - Connection established!\n");
+                            connection_active = TRUE;
+                            return 0; // SUCCESS
+                        }
+                        else
+                            step = START_STEP;
+                        break;
+
+                    default:
                         step = START_STEP;
-                    break;
-                default:
-                    break;
+                        break;
+                    }
                 }
             }
+
+            // timeout occurred
+            if (timeoutFlag)
+            {
+                printf("TIMEOUT on attempt %d/%d - Retransmitting SET\n", retransmissions + 1, connection_params.nRetransmissions);
+            }
+
+            retransmissions++;
         }
 
-        printf("Timeout! Retrying...\n");
+        alarm(0); 
+        printf("Connection failed after %d attempts\n", connection_params.nRetransmissions);
+        return -1;
     }
-    printf("Connection failed after %d attempts.\n", connectionParameters.nRetransmissions);
-    return -1;
 }
 
 ////////////////////////////////////////////////
