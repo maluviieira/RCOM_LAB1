@@ -321,79 +321,48 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     int bytesWritten = 0;
     int retransmissions = 0;
+    int success = FALSE;
 
-    while (retransmissions < connection_params.nRetransmissions)
+    while (retransmissions < connection_params.nRetransmissions && !success)
     {
-        // send the I frame
-        bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
-        printf("Sent I-%d, %d bytes\n", curr_seq, bytesWritten);
 
-        // wait for supervision frame
+        bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
+        printf("Sent I-%d, %d bytes (attempt %d/%d)\n", curr_seq, bytesWritten, 
+               retransmissions + 1, connection_params.nRetransmissions);
+
+        // wait for supervision frame 
         int step = START_STEP;
-        int result_type = -1; // 0=RR0, 1=RR1, 2=REJ0, 3=REJ1
+        int result_type = -1;
         int frame_complete = FALSE;
+        int should_retransmit = FALSE;
 
         timeoutFlag = FALSE;
         alarm(connection_params.timeout);
 
-        while (!frame_complete && !timeoutFlag)
+        while (!frame_complete && !timeoutFlag && !should_retransmit)
         {
             unsigned char byte;
             int bytes = readByteSerialPort(&byte);
 
             if (bytes > 0)
             {
-                printf("Byte received: 0x%02X\n", byte);
-
                 switch (step)
                 {
                 case START_STEP:
-                    if (byte == FLAG)
-                        step = FLAG_STEP;
+                    if (byte == FLAG) step = FLAG_STEP;
                     break;
-
                 case FLAG_STEP:
-                    if (byte == A)
-                    {
-                        step = A_STEP;
-                    }
-                    else if (byte != FLAG)
-                    {
-                        step = START_STEP;
-                    }
+                    if (byte == A) step = A_STEP;
+                    else if (byte != FLAG) step = START_STEP;
                     break;
-
                 case A_STEP:
-                    if (byte == C_RR0)
-                    {
-                        step = C_STEP;
-                        result_type = 0;
-                    }
-                    else if (byte == C_RR1)
-                    {
-                        step = C_STEP;
-                        result_type = 1;
-                    }
-                    else if (byte == C_REJ0)
-                    {
-                        step = C_STEP;
-                        result_type = 2;
-                    }
-                    else if (byte == C_REJ1)
-                    {
-                        step = C_STEP;
-                        result_type = 3;
-                    }
-                    else if (byte == FLAG)
-                    {
-                        step = FLAG_STEP;
-                    }
-                    else
-                    {
-                        step = START_STEP;
-                    }
+                    if (byte == C_RR0) { step = C_STEP; result_type = 0; }
+                    else if (byte == C_RR1) { step = C_STEP; result_type = 1; }
+                    else if (byte == C_REJ0) { step = C_STEP; result_type = 2; }
+                    else if (byte == C_REJ1) { step = C_STEP; result_type = 3; }
+                    else if (byte == FLAG) step = FLAG_STEP;
+                    else step = START_STEP;
                     break;
-
                 case C_STEP:
                     if ((result_type == 0 && byte == BCC1_RR0) ||
                         (result_type == 1 && byte == BCC1_RR1) ||
@@ -402,60 +371,64 @@ int llwrite(const unsigned char *buf, int bufSize)
                     {
                         step = BCC1_STEP;
                     }
-                    else if (byte == FLAG)
-                    {
-                        step = FLAG_STEP;
-                    }
-                    else
-                    {
-                        step = START_STEP;
-                    }
+                    else if (byte == FLAG) step = FLAG_STEP;
+                    else step = START_STEP;
                     break;
-
                 case BCC1_STEP:
                     if (byte == FLAG)
                     {
                         frame_complete = TRUE;
                         alarm(0);
 
-                        // response
-                        if (result_type == 0) // RR0
+                        if (result_type == 0) // RR0 - acknowledges I0
                         {
-                            printf("Received RR0 - Can send I0\n");
-                            if (curr_seq == 1) // success
-                            {
-                                curr_seq = 0;
-                                return bytesWritten;
-                            }
-                            else
-                                printf("ERROR: Sequence mismatch - sent I0 but got RR0\n");
-                        }
-                        else if (result_type == 1) // RR1
-                        {
-                            printf("Received RR1 - Can send I1\n");
-                            if (curr_seq == 0) // success
+                            printf("Received RR0 - I0 acknowledged\n");
+                            if (curr_seq == 0) 
                             {
                                 curr_seq = 1;
-                                return bytesWritten;
+                                success = TRUE;
                             }
                             else
-                                printf("ERROR: Sequence mismatch - sent I0 but got RR1\n");
+                            {
+                                printf("ERROR: Sequence mismatch - sent I%d but got RR0\n", curr_seq);
+                                should_retransmit = TRUE;
+                            }
                         }
-                        else if (result_type == 2) // REJ0
+                        else if (result_type == 1) // RR1 - acknowledges I1
                         {
-                            printf("REJ0 received - retransmitting I0\n");
-                            break; // break inner loop to retransmit
+                            printf("Received RR1 - I1 acknowledged\n");
+                            if (curr_seq == 1) 
+                            {
+                                curr_seq = 0;
+                                success = TRUE;
+                            }
+                            else
+                            {
+                                printf("ERROR: Sequence mismatch - sent I%d but got RR1\n", curr_seq);
+                                should_retransmit = TRUE;
+                            }
                         }
-                        else if (result_type == 3) // REJ1
+                        else if (result_type == 2) // REJ0 - reject I0
                         {
-                            printf("REJ1 received - retransmitting I1\n");
-                            break;
+                            printf("REJ0 received - will retransmit I0\n");
+                            if (curr_seq == 0) {
+                                should_retransmit = TRUE;
+                            } else {
+                                printf("ERROR: REJ0 received but we sent I%d\n", curr_seq);
+                            }
+                        }
+                        else if (result_type == 3) // REJ1 - reject I1
+                        {
+                            printf("REJ1 received - will retransmit I1\n");
+                            if (curr_seq == 1) {
+                                should_retransmit = TRUE;
+                            } else {
+                                printf("ERROR: REJ1 received but we sent I%d\n", curr_seq);
+                            }
                         }
                     }
-                    else
-                        step = START_STEP;
+                    else step = START_STEP;
                     break;
-
                 default:
                     step = START_STEP;
                     break;
@@ -465,16 +438,31 @@ int llwrite(const unsigned char *buf, int bufSize)
 
         if (timeoutFlag)
         {
-            printf("TIMEOUT on attempt %d/%d - Retransmitting I%d\n", retransmissions + 1, connection_params.nRetransmissions, curr_seq);
+            printf("TIMEOUT on attempt %d/%d - will retransmit I%d\n", 
+                   retransmissions + 1, connection_params.nRetransmissions, curr_seq);
+            should_retransmit = TRUE;
         }
 
-        retransmissions++;
-        
+        // count retransmission if we need to resend
+        if (should_retransmit && !success)
+        {
+            retransmissions++;
+            printf("Retransmitting I-%d (attempt %d/%d)\n", curr_seq, 
+                   retransmissions + 1, connection_params.nRetransmissions);
+        }
     }
 
     alarm(0);
-    printf("Failed after %d retransmissions\n", retransmissions);
-    return -1;
+    
+    if (success) {
+        printf("I-%d successfully transmitted after %d attempts\n", 
+               1 - curr_seq, retransmissions + 1);
+        return bytesWritten;
+    } else {
+        printf("Failed to transmit I-%d after %d retransmissions\n", 
+               curr_seq, retransmissions);
+        return -1;
+    }
 }
 
 ////////////////////////////////////////////////
