@@ -14,7 +14,8 @@
 #define FLAG 0x7E
 #define ESC 0x7D
 
-#define A 0x03 // cmds sent by the transmitter or replies sent by the Receiver
+#define A 0x03    // cmds sent by the Transmitter or replies sent by the receiver
+#define A_Rt 0x01 // cmds sent by the Receiver or replies sent by the transmitter
 
 #define C_UA 0x07
 #define C_SET 0x03
@@ -26,9 +27,11 @@
 #define C_I0 0x00
 #define C_I1 0x80 // in binary: 1000000
 
-#define BCC_SET (A ^ C_SET)
-#define BCC_UA (A ^ C_UA)
-#define BCC_DISC (A ^ C_DISC)
+#define BCC1_SET (A ^ C_SET)
+#define BCC1_UA (A ^ C_UA)
+#define BCC1_UA_r (A_Rt ^ C_UA)
+#define BCC1_DISC (A ^ C_DISC)
+#define BCC1_DISC_r (A_Rt ^ C_DISC)
 #define BCC1_RR0 (A ^ C_RR0)
 #define BCC1_RR1 (A ^ C_RR1)
 #define BCC1_REJ0 (A ^ C_REJ0)
@@ -43,8 +46,9 @@
 #define FOUND_ESC_STEP 6
 #define STOP_STEP 7
 
-unsigned char UA[5] = {FLAG, A, C_UA, BCC_UA, FLAG};
-unsigned char SET[5] = {FLAG, A, C_SET, BCC_SET, FLAG};
+unsigned char UA[5] = {FLAG, A, C_UA, BCC1_UA, FLAG};
+unsigned char UA_reply[5] = {FLAG, A_Rt, C_UA, BCC1_UA_r, FLAG};
+unsigned char SET[5] = {FLAG, A, C_SET, BCC1_SET, FLAG};
 
 // supervision frames
 unsigned char RR0[5] = {FLAG, A, C_RR0, BCC1_RR0, FLAG};    // ACK for frame 0
@@ -52,13 +56,13 @@ unsigned char RR1[5] = {FLAG, A, C_RR1, BCC1_RR1, FLAG};    // ACK for frame 1
 unsigned char REJ0[5] = {FLAG, A, C_REJ0, BCC1_REJ0, FLAG}; // NACK for frame 0
 unsigned char REJ1[5] = {FLAG, A, C_REJ1, BCC1_REJ1, FLAG}; // NACK for frame 1
 
-unsigned char DISC[5] = {FLAG, A, C_DISC, BCC_DISC, FLAG}; // DISConnect
+unsigned char DISC[5] = {FLAG, A, C_DISC, BCC1_DISC_r, FLAG}; // DISConnect
 
 volatile int timeoutFlag = 0;
 
-
 volatile int curr_seq = 0; // 0 or 1
 volatile int connection_active = FALSE;
+static int serial_fd = -1;
 
 LinkLayer connection_params;
 
@@ -104,8 +108,8 @@ int llopen(LinkLayer connectionParameters)
 
     if (connectionParameters.role == LlRx)
     {
-        int fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
-        if (fd < 0)
+        serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
+        if (serial_fd < 0)
         {
             perror("error opening serial port");
             return -1;
@@ -147,7 +151,7 @@ int llopen(LinkLayer connectionParameters)
                     step = START_STEP;
                 break;
             case C_STEP:
-                if (byte == BCC_SET)
+                if (byte == BCC1_SET)
                     step = BCC1_STEP;
                 else if (byte == FLAG)
                     step = FLAG_STEP;
@@ -185,8 +189,8 @@ int llopen(LinkLayer connectionParameters)
 
     else
     { // LlTx
-        int fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
-        if (fd < 0)
+        serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
+        if (serial_fd < 0)
         {
             perror("error opening serial port");
             return -1;
@@ -198,14 +202,13 @@ int llopen(LinkLayer connectionParameters)
 
         while (retransmissions < connection_params.nRetransmissions)
         {
-       
+
             int bytes = writeBytesSerialPort(SET, 5);
             printf("SET sent (%d bytes) - attempt %d/%d\n", bytes, retransmissions + 1, connection_params.nRetransmissions);
 
-
             timeoutFlag = FALSE;
             alarm(connection_params.timeout);
-            
+
             int step = START_STEP;
             int frame_complete = FALSE;
 
@@ -242,7 +245,7 @@ int llopen(LinkLayer connectionParameters)
                         break;
 
                     case C_STEP:
-                        if (byte == BCC_UA)
+                        if (byte == BCC1_UA)
                             step = BCC1_STEP;
                         else if (byte == FLAG)
                             step = FLAG_STEP;
@@ -279,7 +282,7 @@ int llopen(LinkLayer connectionParameters)
             retransmissions++;
         }
 
-        alarm(0); 
+        alarm(0);
         printf("Connection failed after %d attempts\n", connection_params.nRetransmissions);
         return -1;
     }
@@ -327,10 +330,10 @@ int llwrite(const unsigned char *buf, int bufSize)
     {
 
         bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
-        printf("Sent I-%d, %d bytes (attempt %d/%d)\n", curr_seq, bytesWritten, 
+        printf("Sent I-%d, %d bytes (attempt %d/%d)\n", curr_seq, bytesWritten,
                retransmissions + 1, connection_params.nRetransmissions);
 
-        // wait for supervision frame 
+        // wait for supervision frame
         int step = START_STEP;
         int result_type = -1;
         int frame_complete = FALSE;
@@ -349,19 +352,40 @@ int llwrite(const unsigned char *buf, int bufSize)
                 switch (step)
                 {
                 case START_STEP:
-                    if (byte == FLAG) step = FLAG_STEP;
+                    if (byte == FLAG)
+                        step = FLAG_STEP;
                     break;
                 case FLAG_STEP:
-                    if (byte == A) step = A_STEP;
-                    else if (byte != FLAG) step = START_STEP;
+                    if (byte == A)
+                        step = A_STEP;
+                    else if (byte != FLAG)
+                        step = START_STEP;
                     break;
                 case A_STEP:
-                    if (byte == C_RR0) { step = C_STEP; result_type = 0; }
-                    else if (byte == C_RR1) { step = C_STEP; result_type = 1; }
-                    else if (byte == C_REJ0) { step = C_STEP; result_type = 2; }
-                    else if (byte == C_REJ1) { step = C_STEP; result_type = 3; }
-                    else if (byte == FLAG) step = FLAG_STEP;
-                    else step = START_STEP;
+                    if (byte == C_RR0)
+                    {
+                        step = C_STEP;
+                        result_type = 0;
+                    }
+                    else if (byte == C_RR1)
+                    {
+                        step = C_STEP;
+                        result_type = 1;
+                    }
+                    else if (byte == C_REJ0)
+                    {
+                        step = C_STEP;
+                        result_type = 2;
+                    }
+                    else if (byte == C_REJ1)
+                    {
+                        step = C_STEP;
+                        result_type = 3;
+                    }
+                    else if (byte == FLAG)
+                        step = FLAG_STEP;
+                    else
+                        step = START_STEP;
                     break;
                 case C_STEP:
                     if ((result_type == 0 && byte == BCC1_RR0) ||
@@ -371,8 +395,10 @@ int llwrite(const unsigned char *buf, int bufSize)
                     {
                         step = BCC1_STEP;
                     }
-                    else if (byte == FLAG) step = FLAG_STEP;
-                    else step = START_STEP;
+                    else if (byte == FLAG)
+                        step = FLAG_STEP;
+                    else
+                        step = START_STEP;
                     break;
                 case BCC1_STEP:
                     if (byte == FLAG)
@@ -383,7 +409,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                         if (result_type == 0) // RR0 - acknowledges I0
                         {
                             printf("Received RR0 - I0 acknowledged\n");
-                            if (curr_seq == 0) 
+                            if (curr_seq == 0)
                             {
                                 curr_seq = 1;
                                 success = TRUE;
@@ -397,7 +423,7 @@ int llwrite(const unsigned char *buf, int bufSize)
                         else if (result_type == 1) // RR1 - acknowledges I1
                         {
                             printf("Received RR1 - I1 acknowledged\n");
-                            if (curr_seq == 1) 
+                            if (curr_seq == 1)
                             {
                                 curr_seq = 0;
                                 success = TRUE;
@@ -411,23 +437,30 @@ int llwrite(const unsigned char *buf, int bufSize)
                         else if (result_type == 2) // REJ0 - reject I0
                         {
                             printf("REJ0 received - will retransmit I0\n");
-                            if (curr_seq == 0) {
+                            if (curr_seq == 0)
+                            {
                                 should_retransmit = TRUE;
-                            } else {
+                            }
+                            else
+                            {
                                 printf("ERROR: REJ0 received but we sent I%d\n", curr_seq);
                             }
                         }
                         else if (result_type == 3) // REJ1 - reject I1
                         {
                             printf("REJ1 received - will retransmit I1\n");
-                            if (curr_seq == 1) {
+                            if (curr_seq == 1)
+                            {
                                 should_retransmit = TRUE;
-                            } else {
+                            }
+                            else
+                            {
                                 printf("ERROR: REJ1 received but we sent I%d\n", curr_seq);
                             }
                         }
                     }
-                    else step = START_STEP;
+                    else
+                        step = START_STEP;
                     break;
                 default:
                     step = START_STEP;
@@ -438,7 +471,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
         if (timeoutFlag)
         {
-            printf("TIMEOUT on attempt %d/%d - will retransmit I%d\n", 
+            printf("TIMEOUT on attempt %d/%d - will retransmit I%d\n",
                    retransmissions + 1, connection_params.nRetransmissions, curr_seq);
             should_retransmit = TRUE;
         }
@@ -447,19 +480,22 @@ int llwrite(const unsigned char *buf, int bufSize)
         if (should_retransmit && !success)
         {
             retransmissions++;
-            printf("Retransmitting I-%d (attempt %d/%d)\n", curr_seq, 
+            printf("Retransmitting I-%d (attempt %d/%d)\n", curr_seq,
                    retransmissions + 1, connection_params.nRetransmissions);
         }
     }
 
     alarm(0);
-    
-    if (success) {
-        printf("I-%d successfully transmitted after %d attempts\n", 
+
+    if (success)
+    {
+        printf("I-%d successfully transmitted after %d attempts\n",
                1 - curr_seq, retransmissions + 1);
         return bytesWritten;
-    } else {
-        printf("Failed to transmit I-%d after %d retransmissions\n", 
+    }
+    else
+    {
+        printf("Failed to transmit I-%d after %d retransmissions\n",
                curr_seq, retransmissions);
         return -1;
     }
@@ -610,7 +646,167 @@ int llread(unsigned char *packet)
 ////////////////////////////////////////////////
 int llclose()
 {
-    // TODO: Implement this function
+    if (!connection_active)
+    {
+        printf("ERROR: no active connection to close\n");
+        return -1;
+    }
+    if (serial_fd < 0)
+    {
+        printf("ERROR: serial port not properly opened\n");
+        return -1;
+    }
 
-    return 0;
+    if (connection_params.role == LlTx)
+    {
+        for (int attempt = 0; attempt < connection_params.nRetransmissions; attempt++)
+        {
+            writeBytesSerialPort(DISC, 5);
+
+            if (read_DISC(TRUE)) // isEcho = TRUE -> echoed DISC
+            {
+                // send UA
+                writeBytesSerialPort(UA_reply, 5);
+
+                // close port
+                closeSerialPort();
+                connection_active = FALSE;
+                serial_fd = -1;
+                return 0;
+            }
+        }
+        return -1;
+    }
+    else
+    {
+        if (read_DISC(FALSE)) // isEcho = FALSE -> og DISC
+        {
+            // echo DISC
+            writeBytesSerialPort(DISC, 5);
+
+            if (read_UA(TRUE)) // isFromTransmitter = TRUE -> UA_reply
+            {
+                // close port
+                closeSerialPort();
+                connection_active = FALSE;
+                return 0;
+            }
+        }
+    }
+}
+
+int read_DISC(int isEcho)
+{
+    int step = START_STEP;
+    timeoutFlag = 0;
+    alarm(connection_params.timeout);
+
+    while (!timeoutFlag)
+    {
+        unsigned char byte;
+        int bytesRead = readByteSerialPort(&byte);
+
+        if (bytesRead > 0)
+        {
+            printf("Byte received: 0x%02X, State: %d\n", byte, step);
+
+            switch (step)
+            {
+            case START_STEP:
+                if (byte == FLAG)
+                    step = FLAG_STEP;
+                break;
+            case FLAG_STEP:
+                if ((!isEcho && byte == A) || (isEcho && byte == A_Rt))
+                    step = A_STEP;
+                else if (byte != FLAG)
+                    step = START_STEP;
+                break;
+            case A_STEP:
+                if (byte == C_DISC)
+                    step = C_STEP;
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case C_STEP:
+                if ((!isEcho && byte == BCC1_DISC) || (isEcho && byte == BCC1_DISC_r))
+                    step = BCC1_STEP;
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case BCC1_STEP:
+                if (byte == FLAG)
+                {
+                    alarm(0);
+                    return 1; // success
+                }
+                else
+                    step = START_STEP;
+                break;
+            }
+        }
+    }
+    return 0; // timeout
+}
+
+int read_UA(int isFromTransmitter)
+{
+    int step = START_STEP;
+    timeoutFlag = 0;
+    alarm(connection_params.timeout);
+
+    while (!timeoutFlag)
+    {
+        unsigned char byte;
+        int bytesRead = readByteSerialPort(&byte);
+
+        if (bytesRead > 0)
+        {
+            printf("Byte received: 0x%02X, State: %d\n", byte, step);
+
+            switch (step)
+            {
+            case START_STEP:
+                if (byte == FLAG)
+                    step = FLAG_STEP;
+                break;
+            case FLAG_STEP:
+                if ((!isFromTransmitter && byte == A) || (isFromTransmitter && byte == A_Rt))
+                    step = A_STEP;
+                else if (byte != FLAG)
+                    step = START_STEP;
+                break;
+            case A_STEP:
+                if (byte == C_UA)
+                    step = C_STEP;
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case C_STEP:
+                if ((!isFromTransmitter && byte == BCC1_UA) || (isFromTransmitter && byte == BCC1_UA_r))
+                    step = BCC1_STEP;
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case BCC1_STEP:
+                if (byte == FLAG)
+                {
+                    alarm(0);
+                    return 1; // success
+                }
+                else
+                    step = START_STEP;
+                break;
+            }
+        }
+    }
+    return 0; // timeout
 }
