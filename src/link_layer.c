@@ -46,17 +46,19 @@
 #define FOUND_ESC_STEP 6
 #define STOP_STEP 7
 
-unsigned char UA[5] = {FLAG, A, C_UA, BCC1_UA, FLAG};
-unsigned char UA_reply[5] = {FLAG, A_Rt, C_UA, BCC1_UA_r, FLAG};
 unsigned char SET[5] = {FLAG, A, C_SET, BCC1_SET, FLAG};
 
+unsigned char UA[5] = {FLAG, A, C_UA, BCC1_UA, FLAG};
+unsigned char UA_reply[5] = {FLAG, A_Rt, C_UA, BCC1_UA_r, FLAG};
+
+unsigned char DISC[5] = {FLAG, A, C_DISC, BCC1_DISC, FLAG};           // DISConnect
+unsigned char DISC_echo[5] = {FLAG, A_Rt, C_DISC, BCC1_DISC_r, FLAG}; // DISC to be echoed by R
+
 // supervision frames
-unsigned char RR0[5] = {FLAG, A, C_RR0, BCC1_RR0, FLAG};    // ACK for frame 0
-unsigned char RR1[5] = {FLAG, A, C_RR1, BCC1_RR1, FLAG};    // ACK for frame 1
+unsigned char RR0[5] = {FLAG, A, C_RR0, BCC1_RR0, FLAG};    // ACK for frame 1 -> Ready to Receive I1
+unsigned char RR1[5] = {FLAG, A, C_RR1, BCC1_RR1, FLAG};    // ACK for frame 0 -> Ready to Receive I0
 unsigned char REJ0[5] = {FLAG, A, C_REJ0, BCC1_REJ0, FLAG}; // NACK for frame 0
 unsigned char REJ1[5] = {FLAG, A, C_REJ1, BCC1_REJ1, FLAG}; // NACK for frame 1
-
-unsigned char DISC[5] = {FLAG, A, C_DISC, BCC1_DISC_r, FLAG}; // DISConnect
 
 volatile int timeoutFlag = 0;
 
@@ -738,7 +740,7 @@ int llclose()
         if (read_DISC(FALSE)) // isEcho = FALSE -> og DISC
         {
             // echo DISC
-            writeBytesSerialPort(DISC, 5);
+            writeBytesSerialPort(DISC_echo, 5);
 
             if (read_UA(TRUE)) // isFromTransmitter = TRUE -> UA_reply
             {
