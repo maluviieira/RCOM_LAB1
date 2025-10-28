@@ -639,6 +639,12 @@ int llread(unsigned char *packet)
                 break;
 
             case BCC1_STEP:
+                if (data_index >= 1024)
+                {
+                    printf("Buffer overflow!\n");
+                    return -1;
+                }
+                
                 // store data bytes (including potential BCC2)
                 buffer[data_index++] = byte;
 
@@ -744,6 +750,8 @@ int llclose()
 
             if (read_UA(TRUE)) // isFromTransmitter = TRUE -> UA_reply
             {
+                alarm(0);
+
                 // close port
                 closeSerialPort();
                 connection_active = FALSE;
