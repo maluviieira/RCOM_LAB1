@@ -125,10 +125,10 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         free(startPacket);
 
         // 2. send data packets
-        unsigned char buffer[PACKET_DATA_SIZE];
+        unsigned char buffer[MAX_PAYLOAD_SIZE];
         int seq = 0, bytesRead;
 
-        while ((bytesRead = fread(buffer, 1, PACKET_DATA_SIZE, file)) > 0)
+        while ((bytesRead = fread(buffer, 1, MAX_PAYLOAD_SIZE, file)) > 0)
         {
             int packetSize = 4 + bytesRead; // C + N + L2 + L1 + data
             unsigned char *dataPacket = malloc(packetSize);
@@ -155,7 +155,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     else
     {
 
-        unsigned char packet[1024];
+        unsigned char packet[MAX_PAYLOAD_SIZE];
         char recvFilename[256];
         long recvFileSize = 0;
         FILE *output = NULL;
