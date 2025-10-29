@@ -120,7 +120,22 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             printf("START packet sent (%d bytes)\n", startSize);
             free(startPacket);
 
-            
+            // 2. send data packets
+            unsigned char buffer[PACKET_DATA_SIZE];
+            int seq = 0, bytesRead;
+
+            while ((bytesRead = fread(buffer, 1, PACKET_DATA_SIZE, file)) > 0)
+            {
+                int packetSize = 4 + bytesRead; // C + N + L2 + L1 + data
+                unsigned char *dataPacket = malloc(packetSize);
+                packetSize = createDataPacket(dataPacket, seq, buffer, bytesRead);
+
+                printf("Sending DATA #%d (%d bytes)\n", seq, bytesRead);
+                llwrite(dataPacket, packetSize);
+                free(dataPacket);
+
+                seq = (seq + 1) % 256;
+            }
 
             const char *og_data = "Hello World! This is a test message.";
             int totalLength = strlen(og_data);
