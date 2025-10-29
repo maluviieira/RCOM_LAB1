@@ -23,7 +23,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     {
         if (ll.role == LlTx)
         {
-            const char *og_data = "Hello World! This is a test message.";
+            const char *og_data = "Test\x7Ewith\x7Dmultiple\x7Especial\x7Dbytes";
             int totalLength = strlen(og_data);
 
             printf("Transmitting: '%s'\n", og_data);
