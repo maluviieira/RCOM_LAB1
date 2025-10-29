@@ -104,7 +104,6 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     if (ll.role == LlTx)
     {
-
         FILE *file = fopen(filename, "rb");
         if (!file)
         {
@@ -121,7 +120,15 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         int startSize = 1 + 2 + 4 + 2 + strlen(filename); // C + TLV + TLV
         unsigned char *startPacket = malloc(startSize);
         startSize = createControlPacket(startPacket, filename, fileSize, CONTROL_START);
-        llwrite(startPacket, startSize);
+        
+        // ADD ERROR CHECKING FOR START PACKET
+        if (llwrite(startPacket, startSize) < 0) {
+            printf("START packet transmission failed after max retransmissions. Closing.\n");
+            free(startPacket);
+            fclose(file);
+            llclose();
+            return;
+        }
         printf("START packet sent (%d bytes)\n", startSize);
         free(startPacket);
 
@@ -136,7 +143,15 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             packetSize = createDataPacket(dataPacket, buffer, bytesRead, seq);
 
             printf("Sending DATA #%d (%d bytes)\n", seq, bytesRead);
-            llwrite(dataPacket, packetSize);
+            
+            // ADD ERROR CHECKING FOR DATA PACKETS
+            if (llwrite(dataPacket, packetSize) < 0) {
+                printf("DATA packet transmission failed after max retransmissions. Closing.\n");
+                free(dataPacket);
+                fclose(file);
+                llclose();
+                return;
+            }
             free(dataPacket);
 
             seq = (seq + 1) % 256;
@@ -146,7 +161,15 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         int endSize = 1 + 2 + 4 + 2 + strlen(filename);
         unsigned char *endPacket = malloc(endSize);
         endSize = createControlPacket(endPacket, filename, fileSize, CONTROL_END);
-        llwrite(endPacket, endSize);
+        
+        // ADD ERROR CHECKING FOR END PACKET
+        if (llwrite(endPacket, endSize) < 0) {
+            printf("END packet transmission failed after max retransmissions. Closing.\n");
+            free(endPacket);
+            fclose(file);
+            llclose();
+            return;
+        }
         printf("END packet sent (%d bytes)\n", endSize);
         free(endPacket);
 
@@ -155,7 +178,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     }
     else
     {
-
+        // Receiver code remains unchanged...
         unsigned char packet[MAX_PAYLOAD_SIZE];
         char recvFilename[256];
         long recvFileSize = 0;
