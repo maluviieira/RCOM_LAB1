@@ -44,7 +44,7 @@
 #define C_STEP 3
 #define BCC1_STEP 4
 #define DATA_STEP 5
-#define FOUND_ESC_STEP 6
+#define ESCAPE_STEP 6
 #define STOP_STEP 7
 
 unsigned char SET[5] = {FLAG, A, C_SET, BCC1_SET, FLAG};
@@ -563,6 +563,9 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
+////////////////////////////////////////////////
+// LLREAD
+////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
     if (!connection_active)
@@ -575,139 +578,201 @@ int llread(unsigned char *packet)
     int step = START_STEP;
     int data_index = 0;
     unsigned char control;
-    int destuff_next = FALSE;
-    int found_bcc2 = FALSE;
-    unsigned char bcc2_byte;
+    int expected_seq = 0;
+    int is_duplicate = FALSE;
 
-    while (step != STOP_STEP)
+    while (1) // Loop until we get a correct I frame
     {
-        unsigned char byte;
-        int bytesRead = readByteSerialPort(&byte);
+        step = START_STEP;
+        data_index = 0;
+        is_duplicate = FALSE;
 
-        if (bytesRead > 0)
+        // Read one complete frame
+        while (step != STOP_STEP)
         {
-            printf("Byte received: 0x%02X, Step: %d, Destuff?: %d \n", byte, step, destuff_next);
+            unsigned char byte;
+            int bytesRead = readByteSerialPort(&byte);
 
-            // Handle byte destuffing
-            if (destuff_next)
+            if (bytesRead > 0)
             {
-                byte = byte ^ STUFF_BYTE;
-                destuff_next = FALSE;
-                printf("Destuffed to: 0x%02X\n", byte);
-            }
-            else if (byte == ESC)
-            {
-                destuff_next = TRUE;
-                continue; // Skip to next byte (the stuffed byte)
-            }
+                printf("Byte received: 0x%02X, Step: %d\n", byte, step);
 
-            switch (step)
-            {
-            case START_STEP:
-                if (byte == FLAG)
-                    step = FLAG_STEP;
-                break;
-
-            case FLAG_STEP:
-                if (byte == A)
-                    step = A_STEP;
-                else if (byte != FLAG)
-                    step = START_STEP;
-                break;
-
-            case A_STEP:
-                if (byte == C_I0 || byte == C_I1)
+                switch (step)
                 {
-                    control = byte;
-                    step = C_STEP;
-                }
-                else if (byte == FLAG)
-                    step = FLAG_STEP;
-                else
-                    step = START_STEP;
-                break;
+                case START_STEP:
+                    if (byte == FLAG)
+                        step = FLAG_STEP;
+                    break;
 
-            case C_STEP:
-                if (byte == (A ^ control))
-                {
-                    step = BCC1_STEP;
-                    data_index = 0; // Reset data buffer
-                    found_bcc2 = FALSE;
-                }
-                else if (byte == FLAG)
-                    step = FLAG_STEP;
-                else
-                    step = START_STEP;
-                break;
+                case FLAG_STEP:
+                    if (byte == A)
+                        step = A_STEP;
+                    else if (byte != FLAG)
+                        step = START_STEP;
+                    break;
 
-            case BCC1_STEP:
-                if (data_index >= 1024)
-                {
-                    printf("Buffer overflow!\n");
-                    return -1;
-                }
-
-                // Store the byte
-                buffer[data_index++] = byte;
-
-                // Check if this might be the end of frame
-                if (byte == FLAG)
-                {
-                    // We found a FLAG - check if we have enough data for a complete frame
-                    if (data_index >= 3) // Need at least: data + BCC2 + FLAG
+                case A_STEP:
+                    if (byte == C_I0 || byte == C_I1)
                     {
-                        // The byte before FLAG should be BCC2
-                        bcc2_byte = buffer[data_index - 2];
-                        int data_size = data_index - 2; // Data size excluding BCC2 and FLAG
+                        control = byte;
+                        step = C_STEP;
+                    }
+                    else if (byte == FLAG)
+                        step = FLAG_STEP;
+                    else
+                        step = START_STEP;
+                    break;
 
-                        // Calculate BCC2 from received data
-                        unsigned char calc_bcc2 = BCC2(buffer, data_size);
-
-                        printf("BCC2 check: received=0x%02X, calculated=0x%02X, data_size=%d\n", 
-                               bcc2_byte, calc_bcc2, data_size);
-
-                        if (bcc2_byte == calc_bcc2)
+                case C_STEP:
+                    // Check BCC1
+                    if (byte == (A ^ control))
+                    {
+                        // BCC1 is correct - check sequence number
+                        int received_seq = (control == C_I1) ? 1 : 0;
+                        
+                        if (received_seq == expected_seq)
                         {
-                            // Valid frame received!
-                            step = STOP_STEP;
-
-                            // Send appropriate ACK
-                            if (control == C_I0)
-                            {
-                                writeBytesSerialPort(RR1, 5);
-                                printf("Valid I0 received - Sent RR1\n");
-                            }
-                            else
-                            {
-                                writeBytesSerialPort(RR0, 5);
-                                printf("Valid I1 received - Sent RR0\n");
-                            }
-
-                            // Copy data to packet (excluding BCC2)
-                            for (int i = 0; i < data_size; i++)
-                            {
-                                packet[i] = buffer[i];
-                            }
-
-                            return data_size;
+                            // New frame - expected sequence
+                            is_duplicate = FALSE;
+                            step = DATA_STEP;  // Changed from BCC1_STEP to DATA_STEP
+                            data_index = 0;
                         }
                         else
                         {
-                            // BCC2 error
-                            printf("BCC2 ERROR - Might be FLAG in data...\n");
+                            // Duplicate frame - wrong sequence
+                            is_duplicate = TRUE;
+                            step = DATA_STEP;  // Changed from BCC1_STEP to DATA_STEP
+                            data_index = 0;
+                        }
+                    }
+                    else if (byte == FLAG)
+                        step = FLAG_STEP;
+                    else
+                        step = START_STEP; // BCC1 incorrect - ignore frame
+                    break;
+
+                case DATA_STEP:  // NEW STATE: Handle data with destuffing
+                    if (data_index >= 1024)
+                    {
+                        printf("Buffer overflow!\n");
+                        step = START_STEP;
+                        break;
+                    }
+
+                    if (byte == ESC)
+                    {
+                        step = ESCAPE_STEP;  // Next byte needs destuffing
+                    }
+                    else if (byte == FLAG)
+                    {
+                        // End of frame reached - process the complete frame
+                        if (data_index >= 1) // Need at least BCC2
+                        {
+                            unsigned char received_bcc2 = buffer[data_index - 1];
+                            int data_size = data_index - 1; // Data size excluding BCC2
+
+                            // Calculate BCC2 from received data
+                            unsigned char calc_bcc2 = BCC2(buffer, data_size);
+
+                            printf("BCC2 check: received=0x%02X, calculated=0x%02X, data_size=%d, seq=%d, duplicate=%d\n", 
+                                   received_bcc2, calc_bcc2, data_size, (control == C_I1) ? 1 : 0, is_duplicate);
+
+                            // Handle based on BCC2 result and sequence
+                            if (received_bcc2 == calc_bcc2)
+                            {
+                                // BCC2 correct
+                                if (!is_duplicate)
+                                {
+                                    // New frame with correct BCC2 - send RR for next frame
+                                    if (control == C_I0)
+                                    {
+                                        writeBytesSerialPort(RR1, 5);
+                                        printf("Valid I0 received - Sent RR1 (expecting I1 next)\n");
+                                        expected_seq = 1;
+                                    }
+                                    else
+                                    {
+                                        writeBytesSerialPort(RR0, 5);
+                                        printf("Valid I1 received - Sent RR0 (expecting I0 next)\n");
+                                        expected_seq = 0;
+                                    }
+
+                                    // Copy data to packet (excluding BCC2)
+                                    for (int i = 0; i < data_size; i++)
+                                    {
+                                        packet[i] = buffer[i];
+                                    }
+                                    return data_size;
+                                }
+                                else
+                                {
+                                    // Duplicate frame with correct BCC2
+                                    if (expected_seq == 0)
+                                        writeBytesSerialPort(RR0, 5);
+                                    else
+                                        writeBytesSerialPort(RR1, 5);
+                                    printf("Duplicate frame - discarded\n");
+                                    step = START_STEP;
+                                }
+                            }
+                            else
+                            {
+                                // BCC2 incorrect
+                                if (!is_duplicate)
+                                {
+                                    // New frame with BCC2 error - send REJ
+                                    if (control == C_I0)
+                                        writeBytesSerialPort(REJ0, 5);
+                                    else
+                                        writeBytesSerialPort(REJ1, 5);
+                                    printf("BCC2 error - sent REJ\n");
+                                }
+                                else
+                                {
+                                    // Duplicate frame with BCC2 error
+                                    if (expected_seq == 0)
+                                        writeBytesSerialPort(RR0, 5);
+                                    else
+                                        writeBytesSerialPort(RR1, 5);
+                                    printf("Duplicate frame with BCC2 error - discarded\n");
+                                }
+                                step = START_STEP;
+                            }
+                        }
+                        else
+                        {
+                            printf("Frame too short\n");
+                            step = START_STEP;
                         }
                     }
                     else
                     {
-                        // Frame too short - might be FLAG in data, continue reading
-                        printf("Frame too short, continuing...\n");
+                        // Normal data byte
+                        buffer[data_index++] = byte;
                     }
-                }
-                break;
+                    break;
 
-            default:
-                step = START_STEP;
-                break;
+                case ESCAPE_STEP:  // NEW STATE: Handle destuffing
+                    // Destuff the byte
+                    byte = byte ^ STUFF_BYTE;
+                    printf("Destuffed to: 0x%02X\n", byte);
+                    
+                    if (data_index >= 1024)
+                    {
+                        printf("Buffer overflow!\n");
+                        step = START_STEP;
+                    }
+                    else
+                    {
+                        buffer[data_index++] = byte;
+                        step = DATA_STEP;  // Return to data state
+                    }
+                    break;
+
+                default:
+                    step = START_STEP;
+                    break;
+                }
             }
         }
     }
