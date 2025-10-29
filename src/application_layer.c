@@ -119,7 +119,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         // 1. send start packet
         int startSize = 1 + 2 + 4 + 2 + strlen(filename); // C + TLV + TLV
         unsigned char *startPacket = malloc(startSize);
-        startSize = buildControlPacket(startPacket, CONTROL_START, filename, fileSize);
+        startSize = createControlPacket(startPacket, CONTROL_START, filename, fileSize);
         llwrite(startPacket, startSize);
         printf("START packet sent (%d bytes)\n", startSize);
         free(startPacket);
@@ -144,7 +144,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         // 3. send end packet
         int endSize = 1 + 2 + 4 + 2 + strlen(filename);
         unsigned char *endPacket = malloc(endSize);
-        endSize = buildControlPacket(endPacket, CONTROL_END, filename, fileSize);
+        endSize = createControlPacket(endPacket, CONTROL_END, filename, fileSize);
         llwrite(endPacket, endSize);
         printf("END packet sent (%d bytes)\n", endSize);
         free(endPacket);
