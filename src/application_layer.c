@@ -173,13 +173,18 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             if (packet[0] == CONTROL_START)
             {
                 parseControlPacket(packet, size, recvFilename, &recvFileSize);
-                output = fopen(recvFilename, "wb");
+            
+                char outputFilename[256];
+                snprintf(outputFilename, sizeof(outputFilename), "penguin-received.gif");
+                
+                output = fopen(outputFilename, "wb");
                 if (!output)
                 {
                     perror("Error opening output file");
                     break;
                 }
                 printf("START packet received: '%s' (%ld bytes)\n", recvFilename, recvFileSize);
+                printf("Saving to: '%s'\n", outputFilename);
             }
             else if (packet[0] == CONTROL_DATA)
             {
