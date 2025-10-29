@@ -7,53 +7,61 @@
 #include <unistd.h>
 #include <stdint.h>
 
-#define PACKET_SIZE 5 
+#define PACKET_SIZE 5
+
+#define CONTROL_START 1
+#define CONTROL_END 3
+#define CONTROL_DATA 2
 
 #define FILE_SIZE 0
 #define FILE_NAME 1
 
-int createControlPacket(unsigned char *packet, const char *filename, long fileSize, int control) {
+#define PACKET_DATA_SIZE 512
+
+int createControlPacket(unsigned char *packet, const char *filename, long fileSize, int control)
+{
     int pos = 0;
-   
+
     packet[pos++] = control;
-    
-    packet[pos++] = FILE_SIZE;  // type
-    packet[pos++] = 4;              // length (4 bytes for long)
+
+    packet[pos++] = FILE_SIZE; // type
+    packet[pos++] = 4;         // length (4 bytes for long)
     packet[pos++] = (fileSize >> 24) & 0xFF;
     packet[pos++] = (fileSize >> 16) & 0xFF;
     packet[pos++] = (fileSize >> 8) & 0xFF;
     packet[pos++] = fileSize & 0xFF;
 
     uint8_t nameLen = strlen(filename);
-    packet[pos++] = FILE_NAME;  // T
-    packet[pos++] = nameLen;    // L
+    packet[pos++] = FILE_NAME; // T
+    packet[pos++] = nameLen;   // L
     memcpy(&packet[pos], filename, nameLen);
     pos += nameLen;
-    
+
     return pos; // return packet size
 }
 
-int createDataPacket(unsigned char *packet, const unsigned char *data, int dataSize, int seq) {
+int createDataPacket(unsigned char *packet, const unsigned char *data, int dataSize, int seq)
+{
     int pos = 0;
-    
+
     packet[pos++] = 2;
     packet[pos++] = seq; // sequence number
-    
-    // length 
-    packet[pos++] = (dataSize >> 8) & 0xFF;  // L2
-    packet[pos++] = dataSize & 0xFF;         // L1
-    
-    // data 
+
+    // length
+    packet[pos++] = (dataSize >> 8) & 0xFF; // L2
+    packet[pos++] = dataSize & 0xFF;        // L1
+
+    // data
     memcpy(&packet[pos], data, dataSize);
     pos += dataSize;
-    
-    return pos; 
+
+    return pos;
 }
 
+void parseControlPacket(unsigned char *packet, int size, char *filename, long *fileSize)
+{
 
-void parseControlPacket(unsigned char *packet, int size, char *filename, long *fileSize){
-
-    int pos = 1; // skip control field 
+    int pos = 1; // skip control field
 
     while (pos < size)
     {
@@ -77,18 +85,6 @@ void parseControlPacket(unsigned char *packet, int size, char *filename, long *f
     }
 }
 
-long getFileSize(const char *filename)
-{
-    FILE *file = fopen(filename, "rb");
-    if (!file)
-        return -1;
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fclose(file);
-    return size;
-}
-
-
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
 {
@@ -104,6 +100,28 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     {
         if (ll.role == LlTx)
         {
+
+            FILE *file = fopen(filename, "rb");
+            if (!file)
+            {
+                perror("Error opening file");
+                return;
+            }
+            fseek(file, 0, SEEK_END);
+            long fileSize = ftell(file);
+
+            printf("Sending file '%s' (size: %ld bytes)\n", filename, fileSize);
+
+            // 1. send start packet
+            int startSize = 1 + 2 + 4 + 2 + strlen(filename); // C + TLV + TLV
+            unsigned char *startPacket = malloc(startSize);
+            startSize = buildControlPacket(startPacket, CONTROL_START, filename, fileSize);
+            llwrite(startPacket, startSize);
+            printf("START packet sent (%d bytes)\n", startSize);
+            free(startPacket);
+
+            
+
             const char *og_data = "Hello World! This is a test message.";
             int totalLength = strlen(og_data);
 
