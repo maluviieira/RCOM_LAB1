@@ -102,10 +102,8 @@ unsigned char BCC2(const unsigned char *data, int size)
 int read_SET()
 {
     int step = START_STEP;
-    timeoutFlag = FALSE;
-    alarm(connection_params.timeout);
 
-    while (!timeoutFlag)
+    while (1)  // No timeout - wait indefinitely
     {
         unsigned char byte;
         int bytesRead = readByteSerialPort(&byte);
@@ -145,7 +143,6 @@ int read_SET()
             case BCC1_STEP:
                 if (byte == FLAG)
                 {
-                    alarm(0);
                     return 1; // success
                 }
                 else
@@ -157,16 +154,19 @@ int read_SET()
             }
         }
     }
-    return 0; // timeout
+    return 0; // Should never reach here
 }
 
-int read_UA(int isFromTransmitter)
+int read_UA(int isFromTransmitter, int useTimeout)
 {
     int step = START_STEP;
-    timeoutFlag = 0;
-    alarm(connection_params.timeout);
+    
+    if (useTimeout) {
+        timeoutFlag = 0;
+        alarm(connection_params.timeout);
+    }
 
-    while (!timeoutFlag)
+    while (!useTimeout || !timeoutFlag)
     {
         unsigned char byte;
         int bytesRead = readByteSerialPort(&byte);
@@ -206,7 +206,7 @@ int read_UA(int isFromTransmitter)
             case BCC1_STEP:
                 if (byte == FLAG)
                 {
-                    alarm(0);
+                    if (useTimeout) alarm(0);
                     return 1; // success
                 }
                 else
@@ -215,16 +215,21 @@ int read_UA(int isFromTransmitter)
             }
         }
     }
-    return 0; // timeout
+    
+    if (useTimeout) alarm(0);
+    return 0; // timeout (only if useTimeout was TRUE)
 }
 
-int read_DISC(int isEcho)
+int read_DISC(int isEcho, int useTimeout)
 {
     int step = START_STEP;
-    timeoutFlag = 0;
-    alarm(connection_params.timeout);
+    
+    if (useTimeout) {
+        timeoutFlag = 0;
+        alarm(connection_params.timeout);
+    }
 
-    while (!timeoutFlag)
+    while (!useTimeout || !timeoutFlag)
     {
         unsigned char byte;
         int bytesRead = readByteSerialPort(&byte);
@@ -264,7 +269,7 @@ int read_DISC(int isEcho)
             case BCC1_STEP:
                 if (byte == FLAG)
                 {
-                    alarm(0);
+                    if (useTimeout) alarm(0);
                     return 1; // success
                 }
                 else
@@ -273,7 +278,9 @@ int read_DISC(int isEcho)
             }
         }
     }
-    return 0; // timeout
+    
+    if (useTimeout) alarm(0);
+    return 0; // timeout (only if useTimeout was TRUE)
 }
 
 ////////////////////////////////////////////////
@@ -303,7 +310,7 @@ int llopen(LinkLayer connectionParameters)
             printf("SET sent (%d bytes) - attempt %d/%d\n", bytes, attempt + 1, connection_params.nRetransmissions);
 
             // wait for UA
-            if (read_UA(FALSE)) // isFromTransmitter = FALSE
+            if (read_UA(FALSE, TRUE)) // isFromTransmitter = FALSE, useTimeout = TRUE
             {
                 printf("Received UA - Connection established!\n");
                 connection_active = TRUE;
@@ -327,7 +334,8 @@ int llopen(LinkLayer connectionParameters)
             return -1;
         }
 
-        // Wait for SET frame
+        // Wait for SET frame - NO TIMEOUT for receiver
+        printf("Waiting for SET frame (no timeout)...\n");
         if (read_SET())
         {
             printf("Received SET frame, sending UA...\n");
@@ -341,7 +349,7 @@ int llopen(LinkLayer connectionParameters)
         }
         else
         {
-            printf("Timeout waiting for SET frame\n");
+            printf("Error waiting for SET frame\n");
             return -1;
         }
     }
@@ -820,7 +828,8 @@ int llclose()
         {
             writeBytesSerialPort(DISC, 5);
 
-            if (read_DISC(TRUE)) // isEcho = TRUE -> echoed DISC
+            // Transmitter uses timeout when waiting for echoed DISC
+            if (read_DISC(TRUE, TRUE)) // isEcho = TRUE, useTimeout = TRUE
             {
                 // send UA
                 writeBytesSerialPort(UA_reply, 5);
@@ -836,20 +845,21 @@ int llclose()
     }
     else
     {
-        if (read_DISC(FALSE)) // isEcho = FALSE -> og DISC
+        // Receiver waits for DISC without timeout
+        if (read_DISC(FALSE, FALSE)) // isEcho = FALSE, useTimeout = FALSE
         {
             // echo DISC
             writeBytesSerialPort(DISC_echo, 5);
 
-            if (read_UA(TRUE)) // isFromTransmitter = TRUE -> UA_reply
+            // Wait for UA without timeout
+            if (read_UA(TRUE, FALSE)) // isFromTransmitter = TRUE, useTimeout = FALSE
             {
-                alarm(0);
-
                 // close port
                 closeSerialPort();
                 connection_active = FALSE;
                 return 0;
             }
         }
+        return -1;
     }
 }
