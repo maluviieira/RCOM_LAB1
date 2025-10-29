@@ -563,6 +563,9 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
+////////////////////////////////////////////////
+// LLREAD
+////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
     if (!connection_active)
@@ -572,21 +575,22 @@ int llread(unsigned char *packet)
     }
 
     unsigned char buffer[1024];
+    unsigned char destuffed_buffer[1024];
     int step = START_STEP;
-    int data_index = 0;
+    int buffer_index = 0;
+    int destuffed_index = 0;
     unsigned char control;
     int destuff_next = FALSE;
-    int found_bcc2 = FALSE;
-    unsigned char bcc2_byte;
+    int in_data_section = FALSE;
 
-    while (step != STOP_STEP)
+    while (1) // Keep trying until we get a valid frame
     {
         unsigned char byte;
         int bytesRead = readByteSerialPort(&byte);
 
         if (bytesRead > 0)
         {
-            printf("Byte received: 0x%02X, Step: %d, Destuff?: %d \n", byte, step, destuff_next);
+            printf("Byte: 0x%02X, Step: %d, Destuff?: %d\n", byte, step, destuff_next);
 
             // Handle byte destuffing
             if (destuff_next)
@@ -595,17 +599,22 @@ int llread(unsigned char *packet)
                 destuff_next = FALSE;
                 printf("Destuffed to: 0x%02X\n", byte);
             }
-            else if (byte == ESC)
+            else if (byte == ESC && in_data_section)
             {
                 destuff_next = TRUE;
-                continue; // Skip to next byte (the stuffed byte)
+                continue; // Skip to next byte
             }
 
             switch (step)
             {
             case START_STEP:
                 if (byte == FLAG)
+                {
                     step = FLAG_STEP;
+                    buffer_index = 0;
+                    destuffed_index = 0;
+                    in_data_section = FALSE;
+                }
                 break;
 
             case FLAG_STEP:
@@ -628,50 +637,53 @@ int llread(unsigned char *packet)
                 break;
 
             case C_STEP:
-                if (byte == (A ^ control))
+                if (byte == (A ^ control)) // BCC1 correct
                 {
-                    step = BCC1_STEP;
-                    data_index = 0; // Reset data buffer
-                    found_bcc2 = FALSE;
+                    step = DATA_STEP;
+                    in_data_section = TRUE;
                 }
                 else if (byte == FLAG)
                     step = FLAG_STEP;
                 else
-                    step = START_STEP;
+                    step = START_STEP; // BCC1 incorrect - ignore
                 break;
 
-            case BCC1_STEP:
-                if (data_index >= 1024)
+            case DATA_STEP:
+                if (buffer_index >= 1024)
                 {
                     printf("Buffer overflow!\n");
-                    return -1;
+                    step = START_STEP;
+                    break;
                 }
 
-                // Store the byte
-                buffer[data_index++] = byte;
+                // Store the byte in buffer
+                buffer[buffer_index++] = byte;
+                destuffed_buffer[destuffed_index++] = byte;
 
-                // Check if this might be the end of frame
+                // Check for end of frame (FLAG)
                 if (byte == FLAG)
                 {
-                    // We found a FLAG - check if we have enough data for a complete frame
-                    if (data_index >= 3) // Need at least: data + BCC2 + FLAG
+                    // We found a FLAG - this might be the end of frame
+                    // Process the complete frame we've collected
+                    in_data_section = FALSE;
+                    
+                    // The frame structure is: [data...] [BCC2] [FLAG]
+                    // So we need at least 2 bytes: BCC2 + FLAG
+                    if (buffer_index >= 2)
                     {
-                        // The byte before FLAG should be BCC2
-                        bcc2_byte = buffer[data_index - 2];
-                        int data_size = data_index - 2; // Data size excluding BCC2 and FLAG
+                        // The last byte is FLAG, the one before is BCC2
+                        int data_size = buffer_index - 2; // Size of actual data
+                        unsigned char received_bcc2 = buffer[buffer_index - 2];
+                        
+                        // Calculate BCC2 from the actual data (excluding BCC2 and FLAG)
+                        unsigned char calc_bcc2 = BCC2(destuffed_buffer, data_size);
 
-                        // Calculate BCC2 from received data
-                        unsigned char calc_bcc2 = BCC2(buffer, data_size);
+                        printf("BCC2 check: received=0x%02X, calculated=0x%02X, data_size=%d\n",
+                               received_bcc2, calc_bcc2, data_size);
 
-                        printf("BCC2 check: received=0x%02X, calculated=0x%02X, data_size=%d\n", 
-                               bcc2_byte, calc_bcc2, data_size);
-
-                        if (bcc2_byte == calc_bcc2)
+                        if (received_bcc2 == calc_bcc2)
                         {
-                            // Valid frame received!
-                            step = STOP_STEP;
-
-                            // Send appropriate ACK
+                            // Valid frame - send ACK
                             if (control == C_I0)
                             {
                                 writeBytesSerialPort(RR1, 5);
@@ -683,25 +695,36 @@ int llread(unsigned char *packet)
                                 printf("Valid I1 received - Sent RR0\n");
                             }
 
-                            // Copy data to packet (excluding BCC2)
+                            // Copy data to packet
                             for (int i = 0; i < data_size; i++)
                             {
-                                packet[i] = buffer[i];
+                                packet[i] = destuffed_buffer[i];
                             }
-
                             return data_size;
                         }
                         else
                         {
-                            // BCC2 error
-                            printf("BCC2 ERROR - Might be FLAG in data...\n");
+                            // BCC2 error - send REJ
+                            printf("BCC2 ERROR - Sending REJ\n");
+                            if (control == C_I0)
+                            {
+                                writeBytesSerialPort(REJ0, 5);
+                                printf("Sent REJ0 for corrupted I0 frame\n");
+                            }
+                            else
+                            {
+                                writeBytesSerialPort(REJ1, 5);
+                                printf("Sent REJ1 for corrupted I1 frame\n");
+                            }
                         }
                     }
                     else
                     {
-                        // Frame too short - might be FLAG in data, continue reading
-                        printf("Frame too short, continuing...\n");
+                        printf("Frame too short\n");
                     }
+                    
+                    // Reset for next frame
+                    step = START_STEP;
                 }
                 break;
 
