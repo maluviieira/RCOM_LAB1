@@ -563,9 +563,6 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-////////////////////////////////////////////////
-// LLREAD
-////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
     if (!connection_active)
@@ -583,7 +580,7 @@ int llread(unsigned char *packet)
 
     printf("=== LLREAD STARTING - expected_seq=%d ===\n", expected_seq);
 
-    while (1) // Loop until we get a correct I frame
+    while (TRUE) // Loop until we get a correct I frame
     {
         step = START_STEP;
         data_index = 0;
@@ -597,7 +594,7 @@ int llread(unsigned char *packet)
 
             if (bytesRead > 0)
             {
-                // printf("Byte received: 0x%02X, Step: %d\n", byte, step);
+                printf("Byte received: 0x%02X, Step: %d\n", byte, step);
 
                 switch (step)
                 {
@@ -618,7 +615,7 @@ int llread(unsigned char *packet)
                     {
                         control = byte;
                         step = C_STEP;
-                        printf(">>> CONTROL FIELD: %s (0x%02X)\n", 
+                        printf(">>> CONTROL FIELD: %s (0x%02X)\n",
                                (control == C_I0) ? "C_I0" : "C_I1", control);
                     }
                     else if (byte == FLAG)
@@ -633,16 +630,11 @@ int llread(unsigned char *packet)
                     {
                         // BCC1 is correct - check sequence number
                         int received_seq = (control == C_I1) ? 1 : 0;
-                        
-                        printf(">>> SEQUENCE CHECK: received_seq=%d, expected_seq=%d\n", 
-                               received_seq, expected_seq);
-                        
+
                         if (received_seq == expected_seq)
                         {
                             // New frame - expected sequence
                             is_duplicate = FALSE;
-                            printf(">>> NEW FRAME (seq %d matches expected %d)\n", 
-                                   received_seq, expected_seq);
                             step = DATA_STEP;
                             data_index = 0;
                         }
@@ -650,7 +642,7 @@ int llread(unsigned char *packet)
                         {
                             // Duplicate frame - wrong sequence
                             is_duplicate = TRUE;
-                            printf(">>> DUPLICATE FRAME (seq %d != expected %d) - DISCARDING\n", 
+                            printf(">>> DUPLICATE FRAME (seq %d != expected %d) - DISCARDING\n",
                                    received_seq, expected_seq);
                             step = DATA_STEP;
                             data_index = 0;
@@ -685,11 +677,6 @@ int llread(unsigned char *packet)
                             // Calculate BCC2 from received data
                             unsigned char calc_bcc2 = BCC2(buffer, data_size);
 
-                            printf(">>> BCC2 CHECK: received=0x%02X, calculated=0x%02X, data_size=%d\n", 
-                                   received_bcc2, calc_bcc2, data_size);
-                            printf(">>> FRAME STATUS: seq=%d, duplicate=%d, expected_seq=%d\n", 
-                                   (control == C_I1) ? 1 : 0, is_duplicate, expected_seq);
-
                             // Handle based on BCC2 result and sequence
                             if (received_bcc2 == calc_bcc2)
                             {
@@ -711,16 +698,13 @@ int llread(unsigned char *packet)
                                     // TOGGLE expected sequence
                                     int old_expected = expected_seq;
                                     expected_seq = 1 - expected_seq;
-                                    printf(">>> UPDATED: expected_seq %d -> %d\n", 
-                                           old_expected, expected_seq);
 
                                     // Copy data to packet (excluding BCC2)
                                     for (int i = 0; i < data_size; i++)
                                     {
                                         packet[i] = buffer[i];
                                     }
-                                    
-                                    printf(">>> RETURNING data_size=%d\n", data_size);
+
                                     return data_size;
                                 }
                                 else
@@ -790,7 +774,7 @@ int llread(unsigned char *packet)
                     // Destuff the byte
                     byte = byte ^ STUFF_BYTE;
                     // printf("Destuffed to: 0x%02X\n", byte);
-                    
+
                     if (data_index >= 1024)
                     {
                         printf("Buffer overflow!\n");
