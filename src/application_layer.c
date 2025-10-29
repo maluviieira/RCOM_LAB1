@@ -15,6 +15,22 @@
 #define FILE_SIZE 0
 #define FILE_NAME 1
 
+int createStartPacket(unsigned char *packet, const char *filename, long file_size) {
+    int pos = 0;
+   
+    packet[pos++] = CONTROL_START;
+    
+    packet[pos++] = FILE_SIZE;  // type
+    packet[pos++] = 4;              // length (4 bytes for long)
+    packet[pos++] = (file_size >> 24) & 0xFF;
+    packet[pos++] = (file_size >> 16) & 0xFF;
+    packet[pos++] = (file_size >> 8) & 0xFF;
+    packet[pos++] = file_size & 0xFF;
+    
+    
+    return pos; // return packet size
+}
+
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
 {
