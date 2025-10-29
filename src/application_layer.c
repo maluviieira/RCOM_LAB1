@@ -98,9 +98,27 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     if (llopen(ll) < 0)
     {
-        printf("Connection failed!");
-        return;
-    }
+        if (ll.role == LlTx)
+        {
+            const char *og_data = "Test\x7Ewith\x7Dmultiple\x7Especial\x7Dbytes";
+            int totalLength = strlen(og_data);
+
+            printf("Transmitting: '%s'\n", og_data);
+            printf("Total: %d bytes, Packet size: %d bytes\n\n", totalLength, PACKET_SIZE);
+
+            int packetCount = 0;
+            int totalSent = 0;
+
+            while (totalSent < totalLength)
+            {
+                packetCount++;
+
+                // calculate how many bytes to send in this packet
+                int bytesToSend = totalLength - totalSent;
+                if (bytesToSend > PACKET_SIZE)
+                {
+                    bytesToSend = PACKET_SIZE;
+                }
 
     if (ll.role == LlTx)
     {
