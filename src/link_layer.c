@@ -627,9 +627,14 @@ int llread(unsigned char *packet)
                     // Check BCC1
                     if (byte == (A ^ control))
                     {
+                        is_duplicate = FALSE;
+                        step = DATA_STEP;
+                        data_index = 0;
+
+                        /*
                         // BCC1 is correct - check sequence number
                         int received_seq = (control == C_I1) ? 1 : 0;
-                        
+
                         if (received_seq == expected_seq)
                         {
                             // New frame - expected sequence
@@ -644,6 +649,7 @@ int llread(unsigned char *packet)
                             step = DATA_STEP;  // Changed from BCC1_STEP to DATA_STEP
                             data_index = 0;
                         }
+                        */
                     }
                     else if (byte == FLAG)
                         step = FLAG_STEP;
@@ -651,7 +657,7 @@ int llread(unsigned char *packet)
                         step = START_STEP; // BCC1 incorrect - ignore frame
                     break;
 
-                case DATA_STEP:  // NEW STATE: Handle data with destuffing
+                case DATA_STEP: // NEW STATE: Handle data with destuffing
                     if (data_index >= 1024)
                     {
                         printf("Buffer overflow!\n");
@@ -661,7 +667,7 @@ int llread(unsigned char *packet)
 
                     if (byte == ESC)
                     {
-                        step = ESCAPE_STEP;  // Next byte needs destuffing
+                        step = ESCAPE_STEP; // Next byte needs destuffing
                     }
                     else if (byte == FLAG)
                     {
@@ -674,7 +680,7 @@ int llread(unsigned char *packet)
                             // Calculate BCC2 from received data
                             unsigned char calc_bcc2 = BCC2(buffer, data_size);
 
-                            printf("BCC2 check: received=0x%02X, calculated=0x%02X, data_size=%d, seq=%d, duplicate=%d\n", 
+                            printf("BCC2 check: received=0x%02X, calculated=0x%02X, data_size=%d, seq=%d, duplicate=%d\n",
                                    received_bcc2, calc_bcc2, data_size, (control == C_I1) ? 1 : 0, is_duplicate);
 
                             // Handle based on BCC2 result and sequence
@@ -752,11 +758,11 @@ int llread(unsigned char *packet)
                     }
                     break;
 
-                case ESCAPE_STEP:  // NEW STATE: Handle destuffing
+                case ESCAPE_STEP: // NEW STATE: Handle destuffing
                     // Destuff the byte
                     byte = byte ^ STUFF_BYTE;
                     printf("Destuffed to: 0x%02X\n", byte);
-                    
+
                     if (data_index >= 1024)
                     {
                         printf("Buffer overflow!\n");
@@ -765,7 +771,7 @@ int llread(unsigned char *packet)
                     else
                     {
                         buffer[data_index++] = byte;
-                        step = DATA_STEP;  // Return to data state
+                        step = DATA_STEP; // Return to data state
                     }
                     break;
 
