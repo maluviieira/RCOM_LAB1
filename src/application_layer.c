@@ -113,13 +113,14 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         }
         fseek(file, 0, SEEK_END);
         long fileSize = ftell(file);
+        fseek(file, 0, SEEK_SET); // rewind to beginning
 
         printf("Sending file '%s' (size: %ld bytes)\n", filename, fileSize);
 
         // 1. send start packet
         int startSize = 1 + 2 + 4 + 2 + strlen(filename); // C + TLV + TLV
         unsigned char *startPacket = malloc(startSize);
-        startSize = createControlPacket(startPacket, CONTROL_START, filename, fileSize);
+        startSize = createControlPacket(startPacket, filename, fileSize, CONTROL_START);
         llwrite(startPacket, startSize);
         printf("START packet sent (%d bytes)\n", startSize);
         free(startPacket);
@@ -132,7 +133,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         {
             int packetSize = 4 + bytesRead; // C + N + L2 + L1 + data
             unsigned char *dataPacket = malloc(packetSize);
-            packetSize = createDataPacket(dataPacket, seq, buffer, bytesRead);
+            packetSize = createDataPacket(dataPacket, buffer, bytesRead, seq);
 
             printf("Sending DATA #%d (%d bytes)\n", seq, bytesRead);
             llwrite(dataPacket, packetSize);
@@ -144,7 +145,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         // 3. send end packet
         int endSize = 1 + 2 + 4 + 2 + strlen(filename);
         unsigned char *endPacket = malloc(endSize);
-        endSize = createControlPacket(endPacket, CONTROL_END, filename, fileSize);
+        endSize = createControlPacket(endPacket, filename, fileSize, CONTROL_END);
         llwrite(endPacket, endSize);
         printf("END packet sent (%d bytes)\n", endSize);
         free(endPacket);
