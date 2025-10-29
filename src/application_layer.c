@@ -12,17 +12,17 @@
 #define FILE_SIZE 0
 #define FILE_NAME 1
 
-int createControlPacket(unsigned char *packet, const char *filename, long file_size, int control) {
+int createControlPacket(unsigned char *packet, const char *filename, long fileSize, int control) {
     int pos = 0;
    
     packet[pos++] = control;
     
     packet[pos++] = FILE_SIZE;  // type
     packet[pos++] = 4;              // length (4 bytes for long)
-    packet[pos++] = (file_size >> 24) & 0xFF;
-    packet[pos++] = (file_size >> 16) & 0xFF;
-    packet[pos++] = (file_size >> 8) & 0xFF;
-    packet[pos++] = file_size & 0xFF;
+    packet[pos++] = (fileSize >> 24) & 0xFF;
+    packet[pos++] = (fileSize >> 16) & 0xFF;
+    packet[pos++] = (fileSize >> 8) & 0xFF;
+    packet[pos++] = fileSize & 0xFF;
 
     uint8_t nameLen = strlen(filename);
     packet[pos++] = FILE_NAME;  // T
@@ -33,18 +33,19 @@ int createControlPacket(unsigned char *packet, const char *filename, long file_s
     return pos; // return packet size
 }
 
-int createDataPacket(unsigned char *packet, const unsigned char *data, int data_size) {
+int createDataPacket(unsigned char *packet, const unsigned char *data, int dataSize, int seq) {
     int pos = 0;
     
     packet[pos++] = 2;
+    packet[pos++] = seq; // sequence number
     
     // length 
-    packet[pos++] = (data_size >> 8) & 0xFF;  // L2
-    packet[pos++] = data_size & 0xFF;         // L1
+    packet[pos++] = (dataSize >> 8) & 0xFF;  // L2
+    packet[pos++] = dataSize & 0xFF;         // L1
     
     // data 
-    memcpy(&packet[pos], data, data_size);
-    pos += data_size;
+    memcpy(&packet[pos], data, dataSize);
+    pos += dataSize;
     
     return pos; 
 }
