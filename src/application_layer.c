@@ -137,6 +137,20 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                 seq = (seq + 1) % 256;
             }
 
+            // 3. send end packet 
+            int endSize = 1 + 2 + 4 + 2 + strlen(filename);
+            unsigned char *endPacket = malloc(endSize);
+            endSize = buildControlPacket(endPacket, CONTROL_END, filename, fileSize);
+            llwrite(endPacket, endSize);
+            printf("END packet sent (%d bytes)\n", endSize);
+            free(endPacket);
+
+            fclose(file);
+            printf("File transmission complete!\n");
+
+
+
+
             const char *og_data = "Hello World! This is a test message.";
             int totalLength = strlen(og_data);
 
