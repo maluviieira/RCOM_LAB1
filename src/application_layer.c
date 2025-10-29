@@ -96,123 +96,117 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     ll.nRetransmissions = nTries;
     ll.timeout = timeout;
 
-    if (llopen(ll) == 0)
+    if (llopen(ll) < 0)
     {
-        if (ll.role == LlTx)
-        {
-
-            FILE *file = fopen(filename, "rb");
-            if (!file)
-            {
-                perror("Error opening file");
-                return;
-            }
-            fseek(file, 0, SEEK_END);
-            long fileSize = ftell(file);
-
-            printf("Sending file '%s' (size: %ld bytes)\n", filename, fileSize);
-
-            // 1. send start packet
-            int startSize = 1 + 2 + 4 + 2 + strlen(filename); // C + TLV + TLV
-            unsigned char *startPacket = malloc(startSize);
-            startSize = buildControlPacket(startPacket, CONTROL_START, filename, fileSize);
-            llwrite(startPacket, startSize);
-            printf("START packet sent (%d bytes)\n", startSize);
-            free(startPacket);
-
-            // 2. send data packets
-            unsigned char buffer[PACKET_DATA_SIZE];
-            int seq = 0, bytesRead;
-
-            while ((bytesRead = fread(buffer, 1, PACKET_DATA_SIZE, file)) > 0)
-            {
-                int packetSize = 4 + bytesRead; // C + N + L2 + L1 + data
-                unsigned char *dataPacket = malloc(packetSize);
-                packetSize = createDataPacket(dataPacket, seq, buffer, bytesRead);
-
-                printf("Sending DATA #%d (%d bytes)\n", seq, bytesRead);
-                llwrite(dataPacket, packetSize);
-                free(dataPacket);
-
-                seq = (seq + 1) % 256;
-            }
-
-            // 3. send end packet 
-            int endSize = 1 + 2 + 4 + 2 + strlen(filename);
-            unsigned char *endPacket = malloc(endSize);
-            endSize = buildControlPacket(endPacket, CONTROL_END, filename, fileSize);
-            llwrite(endPacket, endSize);
-            printf("END packet sent (%d bytes)\n", endSize);
-            free(endPacket);
-
-            fclose(file);
-            printf("File transmission complete!\n");
-
-
-
-
+        printf("Connection failed!");
+        return;
+    }
     
-        }
-        else if (ll.role == LlRx)
+    if (ll.role == LlTx)
+    {
+
+        FILE *file = fopen(filename, "rb");
+        if (!file)
         {
-            unsigned char reconstructedData[1024];
-            int totalReceived = 0;
-            int packetCount = 0;
+            perror("Error opening file");
+            return;
+        }
+        fseek(file, 0, SEEK_END);
+        long fileSize = ftell(file);
 
-            printf("Waiting for packets (size: %d bytes)...\n", PACKET_SIZE);
+        printf("Sending file '%s' (size: %ld bytes)\n", filename, fileSize);
 
-            while (TRUE)
-            {
-                packetCount++;
-                unsigned char packet[PACKET_SIZE + 1]; // +1 for null terminator for printing
-                int size = llread(packet);
+        // 1. send start packet
+        int startSize = 1 + 2 + 4 + 2 + strlen(filename); // C + TLV + TLV
+        unsigned char *startPacket = malloc(startSize);
+        startSize = buildControlPacket(startPacket, CONTROL_START, filename, fileSize);
+        llwrite(startPacket, startSize);
+        printf("START packet sent (%d bytes)\n", startSize);
+        free(startPacket);
 
-                if (size > 0)
-                {
-                    memcpy(reconstructedData + totalReceived, packet, size);
-                    totalReceived += size;
+        // 2. send data packets
+        unsigned char buffer[PACKET_DATA_SIZE];
+        int seq = 0, bytesRead;
 
-                    // null terminate for printing
-                    packet[size] = '\0';
+        while ((bytesRead = fread(buffer, 1, PACKET_DATA_SIZE, file)) > 0)
+        {
+            int packetSize = 4 + bytesRead; // C + N + L2 + L1 + data
+            unsigned char *dataPacket = malloc(packetSize);
+            packetSize = createDataPacket(dataPacket, seq, buffer, bytesRead);
 
-                    printf("Packet %d: %d bytes ✓ ('%s')\n", packetCount, size, packet);
+            printf("Sending DATA #%d (%d bytes)\n", seq, bytesRead);
+            llwrite(dataPacket, packetSize);
+            free(dataPacket);
 
-                    // If we received less than a full packet -> done
-                    if (size < PACKET_SIZE)
-                    {
-                        printf("→ Received partial packet, assuming transmission complete\n");
-                        break;
-                    }
-                }
-                else
-                {
-                    printf("Packet %d: failed or no data ✗\n", packetCount);
-                    // if no data after successful packets -> transmission complete
-                    if (totalReceived > 0)
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if (totalReceived > 0)
-            {
-                // null terminate for safe printing
-                reconstructedData[totalReceived] = '\0';
-                printf("\nReconstruction complete: %d packets, %d bytes total\n",
-                       packetCount - 1, totalReceived);
-                printf("Full message: '%s'\n", reconstructedData);
-            }
-            else
-            {
-                printf("\nNo data received\n");
-            }
+            seq = (seq + 1) % 256;
         }
 
-        // llclose();
+        // 3. send end packet
+        int endSize = 1 + 2 + 4 + 2 + strlen(filename);
+        unsigned char *endPacket = malloc(endSize);
+        endSize = buildControlPacket(endPacket, CONTROL_END, filename, fileSize);
+        llwrite(endPacket, endSize);
+        printf("END packet sent (%d bytes)\n", endSize);
+        free(endPacket);
+
+        fclose(file);
+        printf("File transmission complete!\n");
     }
     else
     {
-        printf("Connection failed!\n");
+        unsigned char reconstructedData[1024];
+        int totalReceived = 0;
+        int packetCount = 0;
+
+        printf("Waiting for packets (size: %d bytes)...\n", PACKET_SIZE);
+
+        while (TRUE)
+        {
+            packetCount++;
+            unsigned char packet[PACKET_SIZE + 1]; // +1 for null terminator for printing
+            int size = llread(packet);
+
+            if (size > 0)
+            {
+                memcpy(reconstructedData + totalReceived, packet, size);
+                totalReceived += size;
+
+                // null terminate for printing
+                packet[size] = '\0';
+
+                printf("Packet %d: %d bytes ✓ ('%s')\n", packetCount, size, packet);
+
+                // If we received less than a full packet -> done
+                if (size < PACKET_SIZE)
+                {
+                    printf("→ Received partial packet, assuming transmission complete\n");
+                    break;
+                }
+            }
+            else
+            {
+                printf("Packet %d: failed or no data ✗\n", packetCount);
+                // if no data after successful packets -> transmission complete
+                if (totalReceived > 0)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (totalReceived > 0)
+        {
+            // null terminate for safe printing
+            reconstructedData[totalReceived] = '\0';
+            printf("\nReconstruction complete: %d packets, %d bytes total\n",
+                   packetCount - 1, totalReceived);
+            printf("Full message: '%s'\n", reconstructedData);
+        }
+        else
+        {
+            printf("\nNo data received\n");
+        }
     }
+
+    llclose();
 }
