@@ -26,6 +26,22 @@ int createControlPacket(unsigned char *packet, const char *filename, long file_s
     return pos; // return packet size
 }
 
+int createDataPacket(unsigned char *packet, const unsigned char *data, int data_size) {
+    int pos = 0;
+    
+    packet[pos++] = 2;
+    
+    // length 
+    packet[pos++] = (data_size >> 8) & 0xFF;  // L2
+    packet[pos++] = data_size & 0xFF;         // L1
+    
+    // data 
+    memcpy(&packet[pos], data, data_size);
+    pos += data_size;
+    
+    return pos; 
+}
+
 
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
