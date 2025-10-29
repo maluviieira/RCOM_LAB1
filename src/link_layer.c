@@ -602,8 +602,6 @@ int llread(unsigned char *packet)
 
             if (bytesRead > 0)
             {
-                printf("Byte received: 0x%02X, Step: %d\n", byte, step);
-
                 switch (step)
                 {
                 case START_STEP:
