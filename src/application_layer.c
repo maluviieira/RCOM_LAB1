@@ -8,6 +8,13 @@
 
 #define PACKET_SIZE 5
 
+#define CONTROL_START 1
+#define CONTROL_END   3
+#define CONTROL_DATA  2
+
+#define FILE_SIZE 0
+#define FILE_NAME 1
+
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
 {
