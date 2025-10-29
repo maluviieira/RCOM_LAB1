@@ -17,6 +17,7 @@
 #define A 0x03    // cmds sent by the Transmitter or replies sent by the receiver
 #define A_Rt 0x01 // cmds sent by the Receiver or replies sent by the transmitter
 
+// :P
 #define C_UA 0x07
 #define C_SET 0x03
 #define C_RR0 0xAA
@@ -464,12 +465,12 @@ int llwrite(const unsigned char *buf, int bufSize)
                         frame_complete = TRUE;
                         alarm(0);
 
-                        if (result_type == 0) // RR0 - acknowledges I0
+                        if (result_type == 0) // RR0 - acknowledges I1 (N(r)=0)
                         {
-                            printf("Received RR0 - I0 acknowledged\n");
-                            if (curr_seq == 0)
+                            printf("Received RR0 - I1 acknowledged\n");
+                            if (curr_seq == 1) // We sent I1, got RR0 - correct!
                             {
-                                curr_seq = 1;
+                                curr_seq = 0;
                                 success = TRUE;
                             }
                             else
@@ -478,12 +479,12 @@ int llwrite(const unsigned char *buf, int bufSize)
                                 should_retransmit = TRUE;
                             }
                         }
-                        else if (result_type == 1) // RR1 - acknowledges I1
+                        else if (result_type == 1) // RR1 - acknowledges I0 (N(r)=1)
                         {
-                            printf("Received RR1 - I1 acknowledged\n");
-                            if (curr_seq == 1)
+                            printf("Received RR1 - I0 acknowledged\n");
+                            if (curr_seq == 0) // We sent I0, got RR1 - correct!
                             {
-                                curr_seq = 0;
+                                curr_seq = 1;
                                 success = TRUE;
                             }
                             else
@@ -574,7 +575,9 @@ int llread(unsigned char *packet)
     int step = START_STEP;
     int data_index = 0;
     unsigned char control;
-    int destuff_next = FALSE; // next byte needs destuffing
+    int destuff_next = FALSE;
+    int found_bcc2 = FALSE;
+    unsigned char bcc2_byte;
 
     while (step != STOP_STEP)
     {
@@ -585,6 +588,7 @@ int llread(unsigned char *packet)
         {
             printf("Byte received: 0x%02X, Step: %d, Destuff?: %d \n", byte, step, destuff_next);
 
+            // Handle byte destuffing
             if (destuff_next)
             {
                 byte = byte ^ STUFF_BYTE;
@@ -594,7 +598,7 @@ int llread(unsigned char *packet)
             else if (byte == ESC)
             {
                 destuff_next = TRUE;
-                continue; // skip to next byte
+                continue; // Skip to next byte (the stuffed byte)
             }
 
             switch (step)
@@ -609,7 +613,6 @@ int llread(unsigned char *packet)
                     step = A_STEP;
                 else if (byte != FLAG)
                     step = START_STEP;
-                // if byte == FLAG => stay
                 break;
 
             case A_STEP:
@@ -622,20 +625,19 @@ int llread(unsigned char *packet)
                     step = FLAG_STEP;
                 else
                     step = START_STEP;
-
                 break;
 
             case C_STEP:
                 if (byte == (A ^ control))
                 {
                     step = BCC1_STEP;
-                    data_index = 0; // reset data buffer
+                    data_index = 0; // Reset data buffer
+                    found_bcc2 = FALSE;
                 }
                 else if (byte == FLAG)
                     step = FLAG_STEP;
                 else
                     step = START_STEP;
-
                 break;
 
             case BCC1_STEP:
@@ -644,53 +646,61 @@ int llread(unsigned char *packet)
                     printf("Buffer overflow!\n");
                     return -1;
                 }
-                
-                // store data bytes (including potential BCC2)
+
+                // Store the byte
                 buffer[data_index++] = byte;
 
+                // Check if this might be the end of frame
                 if (byte == FLAG)
                 {
-                    // last stored byte before FLAG should be BCC2
-                    if (data_index >= 2)
+                    // We found a FLAG - check if we have enough data for a complete frame
+                    if (data_index >= 3) // Need at least: data + BCC2 + FLAG
                     {
-                        unsigned char rcv_bcc2 = buffer[data_index - 2]; // second to last is BCC2
-                        int actual_data_size = data_index - 2;           // - BCC2 - FLAG
+                        // The byte before FLAG should be BCC2
+                        bcc2_byte = buffer[data_index - 2];
+                        int data_size = data_index - 2; // Data size excluding BCC2 and FLAG
 
-                        unsigned char calc_bcc2 = BCC2(buffer, actual_data_size);
+                        // Calculate BCC2 from received data
+                        unsigned char calc_bcc2 = BCC2(buffer, data_size);
 
-                        if (rcv_bcc2 == calc_bcc2) // BCC OK
+                        printf("BCC2 check: received=0x%02X, calculated=0x%02X, data_size=%d\n", 
+                               bcc2_byte, calc_bcc2, data_size);
+
+                        if (bcc2_byte == calc_bcc2)
                         {
+                            // Valid frame received!
                             step = STOP_STEP;
 
-                            // send ACK
+                            // Send appropriate ACK
                             if (control == C_I0)
                             {
                                 writeBytesSerialPort(RR1, 5);
-                                printf("Answered with RR1. Ready to Receive I1!\n");
+                                printf("Valid I0 received - Sent RR1\n");
                             }
                             else
                             {
                                 writeBytesSerialPort(RR0, 5);
-                                printf("Answered with RR0. Ready to Receive I0!\n");
+                                printf("Valid I1 received - Sent RR0\n");
                             }
 
-                            // Copy data to output packet
-                            for (int i = 0; i < actual_data_size; i++)
+                            // Copy data to packet (excluding BCC2)
+                            for (int i = 0; i < data_size; i++)
                             {
                                 packet[i] = buffer[i];
                             }
 
-                            return actual_data_size;
+                            return data_size;
                         }
                         else
-                        { // BCC ERROR
-                            printf("FLAG in data detected, continuing...\n");
+                        {
+                            // BCC2 error
+                            printf("BCC2 ERROR - Might be FLAG in data...\n");
                         }
                     }
                     else
                     {
-                        printf("ERROR: Frame too short\n");
-                        return -1;
+                        // Frame too short - might be FLAG in data, continue reading
+                        printf("Frame too short, continuing...\n");
                     }
                 }
                 break;
