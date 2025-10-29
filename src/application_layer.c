@@ -77,7 +77,16 @@ void parseControlPacket(unsigned char *packet, int size, char *filename, long *f
     }
 }
 
-
+long getFileSize(const char *filename)
+{
+    FILE *file = fopen(filename, "rb");
+    if (!file)
+        return -1;
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fclose(file);
+    return size;
+}
 
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
