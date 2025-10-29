@@ -6,19 +6,15 @@
 #include <string.h>
 #include <unistd.h>
 
-#define PACKET_SIZE 5
-
-#define CONTROL_START 1
-#define CONTROL_END   3
-#define CONTROL_DATA  2
+#define PACKET_SIZE 5 
 
 #define FILE_SIZE 0
 #define FILE_NAME 1
 
-int createStartPacket(unsigned char *packet, const char *filename, long file_size) {
+int createControlPacket(unsigned char *packet, const char *filename, long file_size, unsigned char control) {
     int pos = 0;
    
-    packet[pos++] = CONTROL_START;
+    packet[pos++] = control;
     
     packet[pos++] = FILE_SIZE;  // type
     packet[pos++] = 4;              // length (4 bytes for long)
@@ -27,9 +23,10 @@ int createStartPacket(unsigned char *packet, const char *filename, long file_siz
     packet[pos++] = (file_size >> 8) & 0xFF;
     packet[pos++] = file_size & 0xFF;
     
-    
     return pos; // return packet size
 }
+
+
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
