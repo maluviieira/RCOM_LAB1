@@ -49,47 +49,31 @@ int createDataPacket(unsigned char *packet, const unsigned char *data, int data_
     return pos; 
 }
 
-int parseControlPacket(const unsigned char *packet, int packet_size, 
-                        int *control_type, long *file_size, char *filename) {
-    if (packet_size < 7) return -1; // minimum size for start/end
-    
-    *control_type = packet[0];
-    int pos = 1;
-    
-    // reset outputs
-    *file_size = 0;
-    if (filename) filename[0] = '\0';
-    
-    // parse tlv fields
-    while (pos < packet_size) {
-        unsigned char type = packet[pos++];
-        if (pos >= packet_size) return -1;
-        
-        unsigned char length = packet[pos++];
-        if (pos + length > packet_size) return -1;
-        
-        switch (type) {
-            case FILE_SIZE:
-                if (length == 4) {
-                    *file_size = ((long)packet[pos] << 24) | 
-                                ((long)packet[pos+1] << 16) |
-                                ((long)packet[pos+2] << 8) | 
-                                (long)packet[pos+3];
-                }
-                break;
-                
-            case FILE_NAME:
-                if (filename && length > 0) {
-                    memcpy(filename, &packet[pos], length);
-                    filename[length] = '\0';
-                }
-                break;
+
+void parseControlPacket(unsigned char *packet, int size, char *filename, long *fileSize){
+
+    int pos = 1; // skip control field 
+
+    while (pos < size)
+    {
+        uint8_t type = packet[pos++];
+        uint8_t length = packet[pos++];
+
+        if (type == FILE_SIZE)
+        {
+            *fileSize = ((long)packet[pos] << 24) |
+                        ((long)packet[pos + 1] << 16) |
+                        ((long)packet[pos + 2] << 8) |
+                        ((long)packet[pos + 3]);
         }
-        
-        pos += length;
+        else if (type == FILE_NAME)
+        {
+            memcpy(filename, &packet[pos], length);
+            filename[length] = '\0';
+        }
+
+        pos += length; // move to next tlv field
     }
-    
-    return 0; // success
 }
 
 
