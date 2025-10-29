@@ -151,58 +151,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
 
 
-            const char *og_data = "Hello World! This is a test message.";
-            int totalLength = strlen(og_data);
-
-            printf("Transmitting: '%s'\n", og_data);
-            printf("Total: %d bytes, Packet size: %d bytes\n\n", totalLength, PACKET_SIZE);
-
-            int packetCount = 0;
-            int totalSent = 0;
-
-            while (totalSent < totalLength)
-            {
-                packetCount++;
-
-                // calculate how many bytes to send in this packet
-                int bytesToSend = totalLength - totalSent;
-                if (bytesToSend > PACKET_SIZE)
-                {
-                    bytesToSend = PACKET_SIZE;
-                }
-
-                printf("Packet %d: %d bytes -> ", packetCount, bytesToSend);
-
-                int result = llwrite((unsigned char *)(og_data + totalSent), bytesToSend);
-
-                if (result > 0)
-                {
-                    printf("✓ ('");
-
-                    for (int i = 0; i < bytesToSend; i++)
-                    {
-                        printf("%c", og_data[totalSent + i]);
-                    }
-
-                    printf("')\n");
-
-                    totalSent += bytesToSend;
-                }
-                else
-                {
-                    printf("✗\n");
-                    break;
-                }
-
-                // small delay except after the last packet
-                if (totalSent < totalLength)
-                {
-                    sleep(1);
-                }
-            }
-
-            printf("\nTransmission complete: %d packets, %d/%d bytes sent\n",
-                   packetCount, totalSent, totalLength);
+    
         }
         else if (ll.role == LlRx)
         {
