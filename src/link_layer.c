@@ -578,7 +578,7 @@ int llread(unsigned char *packet)
     int step = START_STEP;
     int data_index = 0;
     unsigned char control;
-    int expected_seq = 0;
+    static int expected_seq = 0;
     int is_duplicate = FALSE;
 
     printf("=== LLREAD STARTING - expected_seq=%d ===\n", expected_seq);
