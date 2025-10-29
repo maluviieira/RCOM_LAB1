@@ -627,11 +627,6 @@ int llread(unsigned char *packet)
                     // Check BCC1
                     if (byte == (A ^ control))
                     {
-                        is_duplicate = FALSE;
-                        step = DATA_STEP;
-                        data_index = 0;
-
-                        /*
                         // BCC1 is correct - check sequence number
                         int received_seq = (control == C_I1) ? 1 : 0;
 
@@ -639,17 +634,16 @@ int llread(unsigned char *packet)
                         {
                             // New frame - expected sequence
                             is_duplicate = FALSE;
-                            step = DATA_STEP;  // Changed from BCC1_STEP to DATA_STEP
+                            step = DATA_STEP;
                             data_index = 0;
                         }
                         else
                         {
                             // Duplicate frame - wrong sequence
                             is_duplicate = TRUE;
-                            step = DATA_STEP;  // Changed from BCC1_STEP to DATA_STEP
+                            step = DATA_STEP;
                             data_index = 0;
                         }
-                        */
                     }
                     else if (byte == FLAG)
                         step = FLAG_STEP;
@@ -694,14 +688,15 @@ int llread(unsigned char *packet)
                                     {
                                         writeBytesSerialPort(RR1, 5);
                                         printf("Valid I0 received - Sent RR1 (expecting I1 next)\n");
-                                        expected_seq = 1;
                                     }
                                     else
                                     {
                                         writeBytesSerialPort(RR0, 5);
                                         printf("Valid I1 received - Sent RR0 (expecting I0 next)\n");
-                                        expected_seq = 0;
                                     }
+
+                                    // TOGGLE the expected sequence (this was missing!)
+                                    expected_seq = 1 - expected_seq;
 
                                     // Copy data to packet (excluding BCC2)
                                     for (int i = 0; i < data_size; i++)
@@ -712,7 +707,7 @@ int llread(unsigned char *packet)
                                 }
                                 else
                                 {
-                                    // Duplicate frame with correct BCC2
+                                    // Duplicate frame with correct BCC2 - send RR for current expected frame
                                     if (expected_seq == 0)
                                         writeBytesSerialPort(RR0, 5);
                                     else
