@@ -99,7 +99,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     if (llopen(ll) < 0)
     {
-        printf("Connection failed!");
+        printf("Connection failed!\n");
         return;
     }
 
