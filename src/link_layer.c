@@ -103,7 +103,7 @@ int read_SET()
 {
     int step = START_STEP;
 
-    while (1)  // No timeout - wait indefinitely
+    while (1) // No timeout - wait indefinitely
     {
         unsigned char byte;
         int bytesRead = readByteSerialPort(&byte);
@@ -160,8 +160,9 @@ int read_SET()
 int read_UA(int isFromTransmitter, int useTimeout)
 {
     int step = START_STEP;
-    
-    if (useTimeout) {
+
+    if (useTimeout)
+    {
         timeoutFlag = 0;
         alarm(connection_params.timeout);
     }
@@ -206,7 +207,8 @@ int read_UA(int isFromTransmitter, int useTimeout)
             case BCC1_STEP:
                 if (byte == FLAG)
                 {
-                    if (useTimeout) alarm(0);
+                    if (useTimeout)
+                        alarm(0);
                     return 1; // success
                 }
                 else
@@ -215,16 +217,18 @@ int read_UA(int isFromTransmitter, int useTimeout)
             }
         }
     }
-    
-    if (useTimeout) alarm(0);
+
+    if (useTimeout)
+        alarm(0);
     return 0; // timeout (only if useTimeout was TRUE)
 }
 
 int read_DISC(int isEcho, int useTimeout)
 {
     int step = START_STEP;
-    
-    if (useTimeout) {
+
+    if (useTimeout)
+    {
         timeoutFlag = 0;
         alarm(connection_params.timeout);
     }
@@ -269,7 +273,8 @@ int read_DISC(int isEcho, int useTimeout)
             case BCC1_STEP:
                 if (byte == FLAG)
                 {
-                    if (useTimeout) alarm(0);
+                    if (useTimeout)
+                        alarm(0);
                     return 1; // success
                 }
                 else
@@ -278,9 +283,98 @@ int read_DISC(int isEcho, int useTimeout)
             }
         }
     }
-    
-    if (useTimeout) alarm(0);
+
+    if (useTimeout)
+        alarm(0);
     return 0; // timeout (only if useTimeout was TRUE)
+}
+
+unsigned char readSupervisionFrame()
+{
+    int step = START_STEP;
+    unsigned char result = 0;
+
+    while (step != STOP_STEP && !timeoutFlag)
+    {
+        unsigned char byte;
+        int bytes = readByteSerialPort(&byte);
+
+        if (bytes > 0)
+        {
+            switch (step)
+            {
+            case START_STEP:
+                if (byte == FLAG)
+                    step = FLAG_STEP;
+                break;
+            case FLAG_STEP:
+                if (byte == A)
+                    step = A_STEP;
+                else if (byte != FLAG)
+                    step = START_STEP;
+                break;
+            case A_STEP:
+                if (byte == C_RR0)
+                {
+                    step = C_STEP;
+                    result = 1;
+                }
+                else if (byte == C_RR1)
+                {
+                    step = C_STEP;
+                    result = 2;
+                }
+                else if (byte == C_REJ0)
+                {
+                    step = C_STEP;
+                    result = 3;
+                }
+                else if (byte == C_REJ1)
+                {
+                    step = C_STEP;
+                    result = 4;
+                }
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case C_STEP:
+                if ((result == 1 && byte == BCC1_RR0) ||
+                    (result == 2 && byte == BCC1_RR1) ||
+                    (result == 3 && byte == BCC1_REJ0) ||
+                    (result == 4 && byte == BCC1_REJ1))
+                {
+                    step = BCC1_STEP;
+                }
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case BCC1_STEP:
+                if (byte == FLAG)
+                {
+                    step = STOP_STEP;
+                    return result;
+                }
+                else if (byte == FLAG)
+                {
+                    step = FLAG_STEP;
+                }
+                else
+                {
+                    step = START_STEP;
+                }
+                break;
+            default:
+                step = START_STEP;
+                break;
+            }
+        }
+    }
+
+    return 0; // No frame received or timeout
 }
 
 ////////////////////////////////////////////////
@@ -393,157 +487,92 @@ int llwrite(const unsigned char *buf, int bufSize)
     int retransmissions = 0;
     int success = FALSE;
 
+    printf("=== LLWRITE STARTING for I-%d ===\n", curr_seq);
+
     while (retransmissions < connection_params.nRetransmissions && !success)
     {
         bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
-        printf("Sent I-%d, %d bytes (attempt %d/%d)\n", curr_seq, bytesWritten,
-               retransmissions + 1, connection_params.nRetransmissions);
+        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, retransmissions + 1, connection_params.nRetransmissions);
 
-        // wait for supervision frame WITH TIMEOUT
-        int step = START_STEP;
-        int result_type = -1;
-        int frame_complete = FALSE;
-        int should_retransmit = FALSE;
-
-        timeoutFlag = FALSE;
+        // SIMPLIFIED: Wait for supervision frame with timeout
+        timeoutFlag = 0;
         alarm(connection_params.timeout);
 
-        while (!frame_complete && !timeoutFlag && !should_retransmit)
+        unsigned char supervision_result = 0;
+        int got_response = 0;
+
+        while (!timeoutFlag && !got_response)
         {
-            unsigned char byte;
-            int bytes = readByteSerialPort(&byte);
-
-            if (bytes > 0)
+            supervision_result = readSupervisionFrame();
+            if (supervision_result != 0)
             {
-                switch (step)
-                {
-                case START_STEP:
-                    if (byte == FLAG) step = FLAG_STEP;
-                    break;
-                case FLAG_STEP:
-                    if (byte == A) step = A_STEP;
-                    else if (byte != FLAG) step = START_STEP;
-                    break;
-                case A_STEP:
-                    if (byte == C_RR0) { step = C_STEP; result_type = 0; }
-                    else if (byte == C_RR1) { step = C_STEP; result_type = 1; }
-                    else if (byte == C_REJ0) { step = C_STEP; result_type = 2; }
-                    else if (byte == C_REJ1) { step = C_STEP; result_type = 3; }
-                    else if (byte == FLAG) step = FLAG_STEP;
-                    else step = START_STEP;
-                    break;
-                case C_STEP:
-                    if ((result_type == 0 && byte == BCC1_RR0) ||
-                        (result_type == 1 && byte == BCC1_RR1) ||
-                        (result_type == 2 && byte == BCC1_REJ0) ||
-                        (result_type == 3 && byte == BCC1_REJ1))
-                    {
-                        step = BCC1_STEP;
-                    }
-                    else if (byte == FLAG) step = FLAG_STEP;
-                    else step = START_STEP;
-                    break;
-                case BCC1_STEP:
-                    if (byte == FLAG)
-                    {
-                        frame_complete = TRUE;
-                        alarm(0);
-
-                        // Process the supervision frame
-                        if (result_type == 0) // RR0
-                        {
-                            printf("Received RR0 - I1 acknowledged\n");
-                            if (curr_seq == 1) { curr_seq = 0; success = TRUE; }
-                            else { 
-                                printf("Sequence mismatch - expecting retransmission\n"); 
-                                should_retransmit = TRUE; 
-                            }
-                        }
-                        else if (result_type == 1) // RR1
-                        {
-                            printf("Received RR1 - I0 acknowledged\n");
-                            if (curr_seq == 0) { curr_seq = 1; success = TRUE; }
-                            else { 
-                                printf("Sequence mismatch - expecting retransmission\n"); 
-                                should_retransmit = TRUE; 
-                            }
-                        }
-                        else if (result_type == 2) // REJ0
-                        {
-                            printf("REJ0 received - will retransmit I0\n");
-                            if (curr_seq == 0) should_retransmit = TRUE;
-                            else success = TRUE; // Wrong sequence but still ack
-                        }
-                        else if (result_type == 3) // REJ1
-                        {
-                            printf("REJ1 received - will retransmit I1\n");
-                            if (curr_seq == 1) should_retransmit = TRUE;
-                            else success = TRUE; // Wrong sequence but still ack
-                        }
-                    }
-                    else if (byte == FLAG)
-                    {
-                        // Incomplete frame - restart
-                        step = FLAG_STEP;
-                    }
-                    else
-                    {
-                        step = START_STEP;
-                    }
-                    break;
-                default:
-                    step = START_STEP;
-                    break;
-                }
-            }
-            // ADD THIS: Check for read errors that might indicate connection issues
-            else if (bytes < 0)
-            {
-                printf("Error reading from serial port - connection may be broken\n");
-                should_retransmit = TRUE;
-                break;
+                got_response = 1;
+                alarm(0); // Cancel timeout
             }
         }
 
-        // Handle timeout
+        alarm(0); // Ensure alarm is off
+
         if (timeoutFlag)
         {
-            printf("TIMEOUT on attempt %d/%d - will retransmit I%d\n",
-                   retransmissions + 1, connection_params.nRetransmissions, curr_seq);
-            should_retransmit = TRUE;
-            timeoutFlag = 0; // Reset the flag
+            printf(">>> TIMEOUT on attempt %d - will retransmit\n", retransmissions + 1);
+            retransmissions++;
+            continue;
         }
 
-        alarm(0); // Ensure alarm is cancelled
-
-        // Count retransmission if we need to resend
-        if (should_retransmit && !success)
+        // Process the supervision frame result
+        switch (supervision_result)
         {
-            retransmissions++;
-            if (retransmissions < connection_params.nRetransmissions)
+        case 1: // RR0
+            printf(">>> Received RR0\n");
+            if (curr_seq == 1)
             {
-                printf("Retransmitting I-%d (attempt %d/%d)\n", curr_seq,
-                       retransmissions + 1, connection_params.nRetransmissions);
+                curr_seq = 0;
+                success = TRUE;
             }
             else
             {
-                printf("Max retransmissions (%d) reached for I-%d - ABORTING\n",
-                       connection_params.nRetransmissions, curr_seq);
+                printf(">>> Sequence mismatch - expected RR1\n");
+                retransmissions++;
             }
+            break;
+        case 2: // RR1
+            printf(">>> Received RR1\n");
+            if (curr_seq == 0)
+            {
+                curr_seq = 1;
+                success = TRUE;
+            }
+            else
+            {
+                printf(">>> Sequence mismatch - expected RR0\n");
+                retransmissions++;
+            }
+            break;
+        case 3: // REJ0
+            printf(">>> Received REJ0 - retransmitting\n");
+            retransmissions++;
+            break;
+        case 4: // REJ1
+            printf(">>> Received REJ1 - retransmitting\n");
+            retransmissions++;
+            break;
+        default:
+            printf(">>> Unknown supervision frame - retransmitting\n");
+            retransmissions++;
+            break;
         }
     }
 
     if (success)
     {
-        printf("I-%d successfully transmitted after %d attempts\n",
-               1 - curr_seq, retransmissions + 1);
+        printf(">>> I-%d transmitted successfully after %d attempts\n", 1 - curr_seq, retransmissions + 1);
         return bytesWritten;
     }
     else
     {
-        printf("Failed to transmit I-%d after %d retransmissions - CLOSING CONNECTION\n",
-               curr_seq, retransmissions);
-        connection_active = FALSE; // Mark connection as dead
+        printf(">>> FAILED after %d retransmissions\n", retransmissions);
+        connection_active = FALSE;
         return -1;
     }
 }
