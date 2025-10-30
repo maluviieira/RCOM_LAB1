@@ -1,5 +1,8 @@
 // Link layer protocol implementation
 
+// MISC
+#define _POSIX_SOURCE 1 // POSIX compliant source
+
 #include "link_layer.h"
 #include "serial_port.h"
 #include <signal.h>
@@ -7,9 +10,6 @@
 #include <unistd.h>
 #include <sys/select.h>
 #include <errno.h>
-
-// MISC
-#define _POSIX_SOURCE 1 // POSIX compliant source
 
 #define STUFF_BYTE 0x20
 
@@ -165,67 +165,60 @@ int read_UA(int isFromTransmitter, int useTimeout)
 {
     int step = START_STEP;
 
-    if (useTimeout)
-    {
+    if (useTimeout) {
         timeoutFlag = 0;
         alarm(connection_params.timeout);
     }
 
-    while (!useTimeout || !timeoutFlag)
-    {
+    while (!useTimeout || !timeoutFlag) {
         unsigned char byte;
         int bytesRead = readByteSerialPort(&byte);
 
-        if (bytesRead > 0)
-        {
-            printf("Byte received: 0x%02X, State: %d\n", byte, step);
+        if (bytesRead <= 0) {
+            if (useTimeout && timeoutFlag) break;
+            continue;
+        }
 
-            switch (step)
-            {
-            case START_STEP:
-                if (byte == FLAG)
-                    step = FLAG_STEP;
-                break;
-            case FLAG_STEP:
-                if ((!isFromTransmitter && byte == A) || (isFromTransmitter && byte == A_Rt))
-                    step = A_STEP;
-                else if (byte != FLAG)
-                    step = START_STEP;
-                break;
-            case A_STEP:
-                if (byte == C_UA)
-                    step = C_STEP;
-                else if (byte == FLAG)
-                    step = FLAG_STEP;
-                else
-                    step = START_STEP;
-                break;
-            case C_STEP:
-                if ((!isFromTransmitter && byte == BCC1_UA) || (isFromTransmitter && byte == BCC1_UA_r))
-                    step = BCC1_STEP;
-                else if (byte == FLAG)
-                    step = FLAG_STEP;
-                else
-                    step = START_STEP;
-                break;
-            case BCC1_STEP:
-                if (byte == FLAG)
-                {
-                    if (useTimeout)
-                        alarm(0);
-                    return 1; // success
-                }
-                else
-                    step = START_STEP;
-                break;
-            }
+        switch (step) {
+        case START_STEP:
+            if (byte == FLAG) step = FLAG_STEP;
+            break;
+        case FLAG_STEP:
+            if ((!isFromTransmitter && byte == A) || (isFromTransmitter && byte == A_Rt))
+                step = A_STEP;
+            else if (byte != FLAG)
+                step = START_STEP;
+            break;
+        case A_STEP:
+            if (byte == C_UA)
+                step = C_STEP;
+            else if (byte == FLAG)
+                step = FLAG_STEP;
+            else
+                step = START_STEP;
+            break;
+        case C_STEP:
+            if ((!isFromTransmitter && byte == BCC1_UA) || (isFromTransmitter && byte == BCC1_UA_r))
+                step = BCC1_STEP;
+            else if (byte == FLAG)
+                step = FLAG_STEP;
+            else
+                step = START_STEP;
+            break;
+        case BCC1_STEP:
+            if (byte == FLAG) {
+                if (useTimeout) alarm(0);
+                return 1;
+            } else step = START_STEP;
+            break;
         }
     }
 
-    if (useTimeout)
-        alarm(0);
-    return 0; // timeout (only if useTimeout was TRUE)
+    if (useTimeout) alarm(0);
+    return 0;  // timeout or interrupted read
 }
+
+
 
 int read_DISC(int isEcho, int useTimeout)
 {
@@ -423,71 +416,80 @@ unsigned char readSupervisionFrame()
 int llopen(LinkLayer connectionParameters)
 {
     connection_params = connectionParameters;
-    connection_params.timeout = connectionParameters.timeout;
-    connection_params.nRetransmissions = connectionParameters.nRetransmissions;
+    serial_fd = openSerialPort(connection_params.serialPort, connection_params.baudRate);
+    if (serial_fd < 0) {
+        printf("Error opening serial port %s\n", connection_params.serialPort);
+        return -1;
+    }
 
-    (void)signal(SIGALRM, alarmHandler);
+    if (connection_params.role == LlTx) {
+        printf("Transmitter mode\n");
 
-    if (connectionParameters.role == LlTx)
-    {
-        serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
-        if (serial_fd < 0)
-        {
-            perror("error opening serial port");
+        // --- install alarm handler (no SA_RESTART) ---
+        struct sigaction sa;
+        sa.sa_handler = alarmHandler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;  // ensure read() is interrupted
+        if (sigaction(SIGALRM, &sa, NULL) < 0) {
+            perror("sigaction");
+            closeSerialPort();
             return -1;
         }
 
-        for (int attempt = 0; attempt < connection_params.nRetransmissions; attempt++)
-        {
-            // send SET
-            int bytes = writeBytesSerialPort(SET, 5);
-            printf("SET sent (%d bytes) - attempt %d/%d\n", bytes, attempt + 1, connection_params.nRetransmissions);
+        timeoutFlag = 0;
+        timeoutCount = 0;
+        int retransmissions = 0;
+        int uaReceived = 0;
 
-            // wait for UA
-            if (read_UA(FALSE, TRUE)) // isFromTransmitter = FALSE, useTimeout = TRUE
-            {
-                printf("Received UA - Connection established!\n");
+        while (!uaReceived && retransmissions < connection_params.nRetransmissions) {
+            printf("SET sent (5 bytes) - attempt %d/%d\n",
+                   retransmissions + 1, connection_params.nRetransmissions);
+            if (writeBytesSerialPort(SET, 5) < 0) {
+                perror("writeBytesSerialPort");
+                closeSerialPort();
+                return -1;
+            }
+
+            // start alarm and wait for UA
+            timeoutFlag = 0;
+            alarm(connection_params.timeout);
+            uaReceived = read_UA(FALSE, TRUE);
+
+            if (uaReceived) {
+                alarm(0);
+                printf("UA received. Connection established successfully.\n");
                 connection_active = TRUE;
                 return 0;
             }
-            else
-            {
-                printf("TIMEOUT on attempt %d/%d - Retransmitting SET\n", attempt + 1, connection_params.nRetransmissions);
-            }
+
+            // no UA, alarmHandler printed timeout message already
+            retransmissions++;
         }
 
-        printf("Connection failed after %d attempts\n", connection_params.nRetransmissions);
+        printf("ERROR: No UA received after %d attempts. Aborting connection.\n",
+               connection_params.nRetransmissions);
+        closeSerialPort();
         return -1;
     }
-    else
-    {
-        serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
-        if (serial_fd < 0)
-        {
-            perror("error opening serial port");
-            return -1;
-        }
 
-        // Wait for SET frame - NO TIMEOUT for receiver
-        printf("Waiting for SET frame (no timeout)...\n");
-        if (read_SET())
-        {
-            printf("Received SET frame, sending UA...\n");
-
-            // Send UA response
-            int bytes = writeBytesSerialPort(UA, 5);
-            printf("UA sent (%d bytes)\n", bytes);
-
+    // --- RECEIVER ---
+    else if (connection_params.role == LlRx) {
+        printf("Receiver mode\n");
+        if (read_SET() == 1) {
+            writeBytesSerialPort(UA, 5);
+            printf("SET received. UA sent.\n");
             connection_active = TRUE;
             return 0;
-        }
-        else
-        {
-            printf("Error waiting for SET frame\n");
+        } else {
+            printf("ERROR: Did not receive SET frame.\n");
+            closeSerialPort();
             return -1;
         }
     }
+
+    return -1;
 }
+
 
 ////////////////////////////////////////////////
 // LLWRITE
@@ -529,7 +531,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
 
-    while (retransmissions <= connection_params.nRetransmissions && !success)
+    while (retransmissions <= connection_params.nRetransmissions)
     {
         // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
