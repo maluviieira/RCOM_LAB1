@@ -108,7 +108,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         FILE *file = fopen(filename, "rb");
         if (!file)
         {
-            perror("Error opening file");
+            perror("Error opening file\n");
             return;
         }
         fseek(file, 0, SEEK_END);

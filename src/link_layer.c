@@ -1,8 +1,5 @@
 // Link layer protocol implementation
 
-// MISC
-#define _POSIX_SOURCE 1 // POSIX compliant source
-
 #include "link_layer.h"
 #include "serial_port.h"
 #include <signal.h>
@@ -10,6 +7,9 @@
 #include <unistd.h>
 #include <sys/select.h>
 #include <errno.h>
+
+// MISC
+#define _POSIX_SOURCE 1 // POSIX compliant source
 
 #define STUFF_BYTE 0x20
 
@@ -165,60 +165,67 @@ int read_UA(int isFromTransmitter, int useTimeout)
 {
     int step = START_STEP;
 
-    if (useTimeout) {
+    if (useTimeout)
+    {
         timeoutFlag = 0;
         alarm(connection_params.timeout);
     }
 
-    while (!useTimeout || !timeoutFlag) {
+    while (!useTimeout || !timeoutFlag)
+    {
         unsigned char byte;
         int bytesRead = readByteSerialPort(&byte);
 
-        if (bytesRead <= 0) {
-            if (useTimeout && timeoutFlag) break;
-            continue;
-        }
+        if (bytesRead > 0)
+        {
+            printf("Byte received: 0x%02X, State: %d\n", byte, step);
 
-        switch (step) {
-        case START_STEP:
-            if (byte == FLAG) step = FLAG_STEP;
-            break;
-        case FLAG_STEP:
-            if ((!isFromTransmitter && byte == A) || (isFromTransmitter && byte == A_Rt))
-                step = A_STEP;
-            else if (byte != FLAG)
-                step = START_STEP;
-            break;
-        case A_STEP:
-            if (byte == C_UA)
-                step = C_STEP;
-            else if (byte == FLAG)
-                step = FLAG_STEP;
-            else
-                step = START_STEP;
-            break;
-        case C_STEP:
-            if ((!isFromTransmitter && byte == BCC1_UA) || (isFromTransmitter && byte == BCC1_UA_r))
-                step = BCC1_STEP;
-            else if (byte == FLAG)
-                step = FLAG_STEP;
-            else
-                step = START_STEP;
-            break;
-        case BCC1_STEP:
-            if (byte == FLAG) {
-                if (useTimeout) alarm(0);
-                return 1;
-            } else step = START_STEP;
-            break;
+            switch (step)
+            {
+            case START_STEP:
+                if (byte == FLAG)
+                    step = FLAG_STEP;
+                break;
+            case FLAG_STEP:
+                if ((!isFromTransmitter && byte == A) || (isFromTransmitter && byte == A_Rt))
+                    step = A_STEP;
+                else if (byte != FLAG)
+                    step = START_STEP;
+                break;
+            case A_STEP:
+                if (byte == C_UA)
+                    step = C_STEP;
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case C_STEP:
+                if ((!isFromTransmitter && byte == BCC1_UA) || (isFromTransmitter && byte == BCC1_UA_r))
+                    step = BCC1_STEP;
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case BCC1_STEP:
+                if (byte == FLAG)
+                {
+                    if (useTimeout)
+                        alarm(0);
+                    return 1; // success
+                }
+                else
+                    step = START_STEP;
+                break;
+            }
         }
     }
 
-    if (useTimeout) alarm(0);
-    return 0;  // timeout or interrupted read
+    if (useTimeout)
+        alarm(0);
+    return 0; // timeout (only if useTimeout was TRUE)
 }
-
-
 
 int read_DISC(int isEcho, int useTimeout)
 {
@@ -288,91 +295,127 @@ int read_DISC(int isEcho, int useTimeout)
 
 unsigned char readSupervisionFrame()
 {
+    if (serial_fd < 0) return 0;
+
     int step = START_STEP;
     unsigned char result = 0;
     unsigned char byte;
 
-    timeoutFlag = 0;
-    alarm(connection_params.timeout); // start timeout
+    // total timeout in seconds (use connection param)
+    int timeout_sec = connection_params.timeout > 0 ? connection_params.timeout : 1;
 
-    while (!timeoutFlag)
+    // We'll build the supervision frame state machine similar to previous code,
+    // but we wait using select() so blocking reads can't hang indefinitely.
+    fd_set readfds;
+    struct timeval tv;
+    int rv;
+
+    while (step != STOP_STEP)
     {
-        int bytes = readByteSerialPort(&byte);
+        FD_ZERO(&readfds);
+        FD_SET(serial_fd, &readfds);
 
-        if (bytes <= 0)
-            continue; // no data yet
+        tv.tv_sec = timeout_sec;
+        tv.tv_usec = 0;
 
-        switch (step)
+        rv = select(serial_fd + 1, &readfds, NULL, NULL, &tv);
+        if (rv == -1)
         {
-        case START_STEP:
-            if (byte == FLAG)
-                step = FLAG_STEP;
-            break;
-        case FLAG_STEP:
-            if (byte == A)
-                step = A_STEP;
-            else if (byte != FLAG)
+            // select error
+            if (errno == EINTR)
+                continue; // interrupted by signal, try again
+            return 0;
+        }
+        else if (rv == 0)
+        {
+            // timeout reached => no supervision frame
+            return 0;
+        }
+        else
+        {
+            // data available
+            int bytes = readByteSerialPort(&byte);
+            if (bytes <= 0)
+            {
+                // no data read or error - treat as timeout/no-frame
+                return 0;
+            }
+
+            switch (step)
+            {
+            case START_STEP:
+                if (byte == FLAG)
+                    step = FLAG_STEP;
+                break;
+            case FLAG_STEP:
+                if (byte == A)
+                    step = A_STEP;
+                else if (byte != FLAG)
+                    step = START_STEP;
+                break;
+            case A_STEP:
+                if (byte == C_RR0)
+                {
+                    step = C_STEP;
+                    result = 1;
+                }
+                else if (byte == C_RR1)
+                {
+                    step = C_STEP;
+                    result = 2;
+                }
+                else if (byte == C_REJ0)
+                {
+                    step = C_STEP;
+                    result = 3;
+                }
+                else if (byte == C_REJ1)
+                {
+                    step = C_STEP;
+                    result = 4;
+                }
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case C_STEP:
+                if ((result == 1 && byte == BCC1_RR0) ||
+                    (result == 2 && byte == BCC1_RR1) ||
+                    (result == 3 && byte == BCC1_REJ0) ||
+                    (result == 4 && byte == BCC1_REJ1))
+                {
+                    step = BCC1_STEP;
+                }
+                else if (byte == FLAG)
+                    step = FLAG_STEP;
+                else
+                    step = START_STEP;
+                break;
+            case BCC1_STEP:
+                if (byte == FLAG)
+                {
+                    step = STOP_STEP;
+                    return result;
+                }
+                else if (byte == FLAG)
+                {
+                    step = FLAG_STEP;
+                }
+                else
+                {
+                    step = START_STEP;
+                }
+                break;
+            default:
                 step = START_STEP;
-            break;
-        case A_STEP:
-            if (byte == C_RR0)
-            {
-                step = C_STEP;
-                result = 1;
+                break;
             }
-            else if (byte == C_RR1)
-            {
-                step = C_STEP;
-                result = 2;
-            }
-            else if (byte == C_REJ0)
-            {
-                step = C_STEP;
-                result = 3;
-            }
-            else if (byte == C_REJ1)
-            {
-                step = C_STEP;
-                result = 4;
-            }
-            else if (byte == FLAG)
-                step = FLAG_STEP;
-            else
-                step = START_STEP;
-            break;
-        case C_STEP:
-            if ((result == 1 && byte == BCC1_RR0) ||
-                (result == 2 && byte == BCC1_RR1) ||
-                (result == 3 && byte == BCC1_REJ0) ||
-                (result == 4 && byte == BCC1_REJ1))
-                step = BCC1_STEP;
-            else if (byte == FLAG)
-                step = FLAG_STEP;
-            else
-                step = START_STEP;
-            break;
-        case BCC1_STEP:
-            if (byte == FLAG)
-            {
-                alarm(0); // stop timeout
-                return result;
-            }
-            else if (byte == FLAG)
-                step = FLAG_STEP;
-            else
-                step = START_STEP;
-            break;
-        default:
-            step = START_STEP;
-            break;
         }
     }
 
-    // timeout occurred
-    alarm(0);
     return 0;
 }
-
 
 ////////////////////////////////////////////////
 // LLOPEN
@@ -380,80 +423,71 @@ unsigned char readSupervisionFrame()
 int llopen(LinkLayer connectionParameters)
 {
     connection_params = connectionParameters;
-    serial_fd = openSerialPort(connection_params.serialPort, connection_params.baudRate);
-    if (serial_fd < 0) {
-        printf("Error opening serial port %s\n", connection_params.serialPort);
-        return -1;
-    }
+    connection_params.timeout = connectionParameters.timeout;
+    connection_params.nRetransmissions = connectionParameters.nRetransmissions;
 
-    if (connection_params.role == LlTx) {
-        printf("Transmitter mode\n");
+    (void)signal(SIGALRM, alarmHandler);
 
-        // --- install alarm handler (no SA_RESTART) ---
-        struct sigaction sa;
-        sa.sa_handler = alarmHandler;
-        sigemptyset(&sa.sa_mask);
-        sa.sa_flags = 0;  // ensure read() is interrupted
-        if (sigaction(SIGALRM, &sa, NULL) < 0) {
-            perror("sigaction");
-            closeSerialPort();
+    if (connectionParameters.role == LlTx)
+    {
+        serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
+        if (serial_fd < 0)
+        {
+            perror("error opening serial port");
             return -1;
         }
 
-        timeoutFlag = 0;
-        timeoutCount = 0;
-        int retransmissions = 0;
-        int uaReceived = 0;
+        for (int attempt = 0; attempt < connection_params.nRetransmissions; attempt++)
+        {
+            // send SET
+            int bytes = writeBytesSerialPort(SET, 5);
+            printf("SET sent (%d bytes) - attempt %d/%d\n", bytes, attempt + 1, connection_params.nRetransmissions);
 
-        while (!uaReceived && retransmissions < connection_params.nRetransmissions) {
-            printf("SET sent (5 bytes) - attempt %d/%d\n",
-                   retransmissions + 1, connection_params.nRetransmissions);
-            if (writeBytesSerialPort(SET, 5) < 0) {
-                perror("writeBytesSerialPort");
-                closeSerialPort();
-                return -1;
-            }
-
-            // start alarm and wait for UA
-            timeoutFlag = 0;
-            alarm(connection_params.timeout);
-            uaReceived = read_UA(FALSE, TRUE);
-
-            if (uaReceived) {
-                alarm(0);
-                printf("UA received. Connection established successfully.\n");
+            // wait for UA
+            if (read_UA(FALSE, TRUE)) // isFromTransmitter = FALSE, useTimeout = TRUE
+            {
+                printf("Received UA - Connection established!\n");
                 connection_active = TRUE;
                 return 0;
             }
-
-            // no UA, alarmHandler printed timeout message already
-            retransmissions++;
+            else
+            {
+                printf("TIMEOUT on attempt %d/%d - Retransmitting SET\n", attempt + 1, connection_params.nRetransmissions);
+            }
         }
 
-        printf("ERROR: No UA received after %d attempts. Aborting connection.\n",
-               connection_params.nRetransmissions);
-        closeSerialPort();
+        printf("Connection failed after %d attempts\n", connection_params.nRetransmissions);
         return -1;
     }
+    else
+    {
+        serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
+        if (serial_fd < 0)
+        {
+            perror("error opening serial port");
+            return -1;
+        }
 
-    // --- RECEIVER ---
-    else if (connection_params.role == LlRx) {
-        printf("Receiver mode\n");
-        if (read_SET() == 1) {
-            writeBytesSerialPort(UA, 5);
-            printf("SET received. UA sent.\n");
+        // Wait for SET frame - NO TIMEOUT for receiver
+        printf("Waiting for SET frame (no timeout)...\n");
+        if (read_SET())
+        {
+            printf("Received SET frame, sending UA...\n");
+
+            // Send UA response
+            int bytes = writeBytesSerialPort(UA, 5);
+            printf("UA sent (%d bytes)\n", bytes);
+
             connection_active = TRUE;
             return 0;
-        } else {
-            printf("ERROR: Did not receive SET frame.\n");
-            closeSerialPort();
+        }
+        else
+        {
+            printf("Error waiting for SET frame\n");
             return -1;
         }
     }
-
-    return -1;
 }
-
 
 ////////////////////////////////////////////////
 // LLWRITE
@@ -495,7 +529,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
 
-    while (retransmissions <= connection_params.nRetransmissions)
+    while (retransmissions <= connection_params.nRetransmissions && !success)
     {
         // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
