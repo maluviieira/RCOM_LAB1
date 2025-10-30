@@ -406,7 +406,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         int should_retransmit = FALSE;
 
         timeoutFlag = FALSE;
-        alarm(connection_params.timeout);  // Start timeout for supervision frame
+        alarm(connection_params.timeout);
 
         while (!frame_complete && !timeoutFlag && !should_retransmit)
         {
@@ -415,7 +415,6 @@ int llwrite(const unsigned char *buf, int bufSize)
 
             if (bytes > 0)
             {
-                // Process supervision frame (your existing state machine)
                 switch (step)
                 {
                 case START_STEP:
@@ -448,57 +447,89 @@ int llwrite(const unsigned char *buf, int bufSize)
                     if (byte == FLAG)
                     {
                         frame_complete = TRUE;
-                        alarm(0);  // Cancel timeout
+                        alarm(0);
 
-                        // Process the supervision frame (your existing logic)
+                        // Process the supervision frame
                         if (result_type == 0) // RR0
                         {
                             printf("Received RR0 - I1 acknowledged\n");
                             if (curr_seq == 1) { curr_seq = 0; success = TRUE; }
-                            else { printf("Sequence mismatch\n"); should_retransmit = TRUE; }
+                            else { 
+                                printf("Sequence mismatch - expecting retransmission\n"); 
+                                should_retransmit = TRUE; 
+                            }
                         }
                         else if (result_type == 1) // RR1
                         {
                             printf("Received RR1 - I0 acknowledged\n");
                             if (curr_seq == 0) { curr_seq = 1; success = TRUE; }
-                            else { printf("Sequence mismatch\n"); should_retransmit = TRUE; }
+                            else { 
+                                printf("Sequence mismatch - expecting retransmission\n"); 
+                                should_retransmit = TRUE; 
+                            }
                         }
                         else if (result_type == 2) // REJ0
                         {
                             printf("REJ0 received - will retransmit I0\n");
                             if (curr_seq == 0) should_retransmit = TRUE;
+                            else success = TRUE; // Wrong sequence but still ack
                         }
                         else if (result_type == 3) // REJ1
                         {
                             printf("REJ1 received - will retransmit I1\n");
                             if (curr_seq == 1) should_retransmit = TRUE;
+                            else success = TRUE; // Wrong sequence but still ack
                         }
                     }
-                    else step = START_STEP;
+                    else if (byte == FLAG)
+                    {
+                        // Incomplete frame - restart
+                        step = FLAG_STEP;
+                    }
+                    else
+                    {
+                        step = START_STEP;
+                    }
                     break;
                 default:
                     step = START_STEP;
                     break;
                 }
             }
+            // ADD THIS: Check for read errors that might indicate connection issues
+            else if (bytes < 0)
+            {
+                printf("Error reading from serial port - connection may be broken\n");
+                should_retransmit = TRUE;
+                break;
+            }
         }
 
-        // Handle timeout - this is where the transmitter should retry
+        // Handle timeout
         if (timeoutFlag)
         {
             printf("TIMEOUT on attempt %d/%d - will retransmit I%d\n",
                    retransmissions + 1, connection_params.nRetransmissions, curr_seq);
             should_retransmit = TRUE;
+            timeoutFlag = 0; // Reset the flag
         }
 
-        alarm(0);  // Ensure alarm is cancelled
+        alarm(0); // Ensure alarm is cancelled
 
         // Count retransmission if we need to resend
         if (should_retransmit && !success)
         {
             retransmissions++;
-            printf("Retransmitting I-%d (attempt %d/%d)\n", curr_seq,
-                   retransmissions + 1, connection_params.nRetransmissions);
+            if (retransmissions < connection_params.nRetransmissions)
+            {
+                printf("Retransmitting I-%d (attempt %d/%d)\n", curr_seq,
+                       retransmissions + 1, connection_params.nRetransmissions);
+            }
+            else
+            {
+                printf("Max retransmissions (%d) reached for I-%d - ABORTING\n",
+                       connection_params.nRetransmissions, curr_seq);
+            }
         }
     }
 
@@ -512,6 +543,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     {
         printf("Failed to transmit I-%d after %d retransmissions - CLOSING CONNECTION\n",
                curr_seq, retransmissions);
+        connection_active = FALSE; // Mark connection as dead
         return -1;
     }
 }

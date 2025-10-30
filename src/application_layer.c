@@ -121,9 +121,9 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         int startSize = 1 + 2 + 4 + 2 + strlen(filename); // C + TLV + TLV
         unsigned char *startPacket = malloc(startSize);
         startSize = createControlPacket(startPacket, filename, fileSize, CONTROL_START);
-        
-        // ADD ERROR CHECKING FOR START PACKET
-        if (llwrite(startPacket, startSize) < 0) {
+
+        if (llwrite(startPacket, startSize) < 0)
+        {
             printf("START packet transmission failed after max retransmissions. Closing.\n");
             free(startPacket);
             fclose(file);
@@ -144,15 +144,16 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             packetSize = createDataPacket(dataPacket, buffer, bytesRead, seq);
 
             printf("Sending DATA #%d (%d bytes)\n", seq, bytesRead);
-            
-            // ADD ERROR CHECKING FOR DATA PACKETS
-            if (llwrite(dataPacket, packetSize) < 0) {
-                printf("DATA packet transmission failed after max retransmissions. Closing.\n");
+
+            if (llwrite(dataPacket, packetSize) < 0)
+            {
+                printf("DATA packet #%d transmission failed after max retransmissions. Closing.\n", seq);
                 free(dataPacket);
                 fclose(file);
                 llclose();
                 return;
             }
+
             free(dataPacket);
 
             seq = (seq + 1) % 256;
@@ -162,9 +163,9 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         int endSize = 1 + 2 + 4 + 2 + strlen(filename);
         unsigned char *endPacket = malloc(endSize);
         endSize = createControlPacket(endPacket, filename, fileSize, CONTROL_END);
-        
-        // ADD ERROR CHECKING FOR END PACKET
-        if (llwrite(endPacket, endSize) < 0) {
+
+        if (llwrite(endPacket, endSize) < 0)
+        {
             printf("END packet transmission failed after max retransmissions. Closing.\n");
             free(endPacket);
             fclose(file);
@@ -197,10 +198,10 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             if (packet[0] == CONTROL_START)
             {
                 parseControlPacket(packet, size, recvFilename, &recvFileSize);
-            
+
                 char outputFilename[256];
                 snprintf(outputFilename, sizeof(outputFilename), "penguin-received.gif");
-                
+
                 output = fopen(outputFilename, "wb");
                 if (!output)
                 {
