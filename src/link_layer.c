@@ -61,19 +61,21 @@ unsigned char RR1[5] = {FLAG, A, C_RR1, BCC1_RR1, FLAG};    // ACK for frame 0 -
 unsigned char REJ0[5] = {FLAG, A, C_REJ0, BCC1_REJ0, FLAG}; // NACK for frame 0
 unsigned char REJ1[5] = {FLAG, A, C_REJ1, BCC1_REJ1, FLAG}; // NACK for frame 1
 
-volatile int timeoutFlag = 0;
-
 volatile int curr_seq = 0; // 0 or 1
 volatile int connection_active = FALSE;
 static int serial_fd = -1;
 
 LinkLayer connection_params;
 
+volatile int timeoutFlag = 0;
+volatile int timeoutCount = 0;
+
 void alarmHandler(int signal)
 {
     timeoutFlag = 1;
+    timeoutCount++;
+    printf(">>> TIMEOUT #%d - No response received\n", timeoutCount);
 }
-
 void stuffAndAddByte(unsigned char byte, unsigned char *frame, int *idx)
 {
     if (byte == FLAG || byte == ESC)
@@ -293,14 +295,16 @@ unsigned char readSupervisionFrame()
 {
     int step = START_STEP;
     unsigned char result = 0;
+    unsigned char byte;
 
     while (step != STOP_STEP && !timeoutFlag)
     {
-        unsigned char byte;
         int bytes = readByteSerialPort(&byte);
 
         if (bytes > 0)
         {
+            printf(">>> Supervision frame byte: 0x%02X, state: %d\n", byte, step);
+
             switch (step)
             {
             case START_STEP:
@@ -355,16 +359,12 @@ unsigned char readSupervisionFrame()
             case BCC1_STEP:
                 if (byte == FLAG)
                 {
-                    step = STOP_STEP;
+                    printf(">>> Complete supervision frame received: type=%d\n", result);
                     return result;
-                }
-                else if (byte == FLAG)
-                {
-                    step = FLAG_STEP;
                 }
                 else
                 {
-                    step = START_STEP;
+                    step = START_STEP; // Expected FLAG but didn't get it
                 }
                 break;
             default:
@@ -372,9 +372,10 @@ unsigned char readSupervisionFrame()
                 break;
             }
         }
+        // If bytes == 0, just continue (no data available)
     }
 
-    return 0; // No frame received or timeout
+    return 0; // Timeout or incomplete frame
 }
 
 ////////////////////////////////////////////////
@@ -487,40 +488,47 @@ int llwrite(const unsigned char *buf, int bufSize)
     int retransmissions = 0;
     int success = FALSE;
 
-    printf("=== LLWRITE STARTING for I-%d ===\n", curr_seq);
+    printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
 
-    while (retransmissions < connection_params.nRetransmissions && !success)
+    while (retransmissions <= connection_params.nRetransmissions && !success)
     {
+        // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
-        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, retransmissions + 1, connection_params.nRetransmissions);
+        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, retransmissions + 1, connection_params.nRetransmissions + 1);
 
-        // SIMPLIFIED: Wait for supervision frame with timeout
+        // Wait for supervision frame with timeout
         timeoutFlag = 0;
+        printf(">>> Waiting for supervision frame (timeout: %ds)...\n", connection_params.timeout);
         alarm(connection_params.timeout);
 
         unsigned char supervision_result = 0;
         int got_response = 0;
 
+        // SIMPLE LOOP: Just wait for response or timeout
         while (!timeoutFlag && !got_response)
         {
             supervision_result = readSupervisionFrame();
             if (supervision_result != 0)
             {
                 got_response = 1;
-                alarm(0); // Cancel timeout
+                alarm(0); // Cancel timeout immediately
             }
         }
-
-        alarm(0); // Ensure alarm is off
+        alarm(0); // Ensure alarm is always cancelled
 
         if (timeoutFlag)
         {
-            printf(">>> TIMEOUT on attempt %d - will retransmit\n", retransmissions + 1);
+            printf(">>> TIMEOUT #%d on attempt %d/%d\n", timeoutCount, retransmissions + 1, connection_params.nRetransmissions + 1);
             retransmissions++;
+            if (retransmissions <= connection_params.nRetransmissions)
+            {
+                printf(">>> Retransmitting I-%d...\n", curr_seq);
+            }
             continue;
         }
 
         // Process the supervision frame result
+        printf(">>> Processing supervision frame result: %d\n", supervision_result);
         switch (supervision_result)
         {
         case 1: // RR0
@@ -529,10 +537,11 @@ int llwrite(const unsigned char *buf, int bufSize)
             {
                 curr_seq = 0;
                 success = TRUE;
+                printf(">>> SUCCESS: I1 acknowledged\n");
             }
             else
             {
-                printf(">>> Sequence mismatch - expected RR1\n");
+                printf(">>> Sequence error: Got RR0 but sent I0\n");
                 retransmissions++;
             }
             break;
@@ -542,23 +551,24 @@ int llwrite(const unsigned char *buf, int bufSize)
             {
                 curr_seq = 1;
                 success = TRUE;
+                printf(">>> SUCCESS: I0 acknowledged\n");
             }
             else
             {
-                printf(">>> Sequence mismatch - expected RR0\n");
+                printf(">>> Sequence error: Got RR1 but sent I1\n");
                 retransmissions++;
             }
             break;
         case 3: // REJ0
-            printf(">>> Received REJ0 - retransmitting\n");
+            printf(">>> Received REJ0 - retransmitting I0\n");
             retransmissions++;
             break;
         case 4: // REJ1
-            printf(">>> Received REJ1 - retransmitting\n");
+            printf(">>> Received REJ1 - retransmitting I1\n");
             retransmissions++;
             break;
         default:
-            printf(">>> Unknown supervision frame - retransmitting\n");
+            printf(">>> Unknown/invalid supervision frame\n");
             retransmissions++;
             break;
         }
@@ -566,12 +576,12 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     if (success)
     {
-        printf(">>> I-%d transmitted successfully after %d attempts\n", 1 - curr_seq, retransmissions + 1);
+        printf(">>> I-%d successfully transmitted after %d attempts\n", 1 - curr_seq, retransmissions + 1);
         return bytesWritten;
     }
     else
     {
-        printf(">>> FAILED after %d retransmissions\n", retransmissions);
+        printf(">>> FAILED to transmit I-%d after %d retransmissions\n", curr_seq, retransmissions);
         connection_active = FALSE;
         return -1;
     }
