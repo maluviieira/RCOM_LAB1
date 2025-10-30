@@ -287,7 +287,7 @@ int llopen(LinkLayer connectionParameters)
 }
 
 ////////////////////////////////////////////////
-// LLWRITE - FIX APPLIED
+// LLWRITE
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
@@ -346,48 +346,40 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
         printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, timeoutCount + 1, connection_params.nRetransmissions + 1);
 
-        // --- Start Waiting for ACK/NACK (A=A, C=RR/REJ) ---
-
-        // Check for RR
+        // Wait for RR or REJ (first try waiting for RR with timeout).
         unsigned char result = read_supervision_frame(A, expected_RR_C, expected_BCC1_RR, TRUE);
 
         if (result == 0)
         {
-            // Timeout occurred, check for REJ (in case multiple responses are buffered)
-            result = read_supervision_frame(A, expected_REJ_C, expected_BCC1_REJ, FALSE);
-
-            // Note: read_supervision_frame cancels its own alarm, so we don't need alarm(0) here.
-
-            // If result is still 0, it means genuine timeout/loss. timeoutCount was already incremented in alarmHandler.
+            // A genuine timeout occurred. alarmHandler already incremented timeoutCount.
+            // Do NOT block trying to check for REJ (that could hang while channel is down).
+            // We'll retransmit in the next iteration if max not reached.
+            printf(">>> Timeout waiting for RR-%d (attempt %d/%d)\n", (curr_seq == 0) ? 1 : 0, timeoutCount, connection_params.nRetransmissions + 1);
+            continue;
         }
 
-        // Process the supervision frame result
-        if (result != 0)
+        // If we received something, check what it was.
+        if (result == expected_RR_C)
         {
-            if (result == expected_RR_C)
-            {
-                curr_seq = 1 - curr_seq;
-                success = TRUE;
-                printf(">>> SUCCESS: I-%d acknowledged by RR-%d\n", 1 - curr_seq, curr_seq);
-                break;
-            }
-            else if (result == expected_REJ_C)
-            {
-                printf(">>> Received REJ-%d - Retransmitting I-%d\n", curr_seq, curr_seq);
-                // Retransmission count increments below
-            }
-            else
-            {
-                // Should not happen, but treat as loss
-                printf(">>> Received unexpected frame (C=0x%02X) - Retransmitting I-%d\n", result, curr_seq);
-            }
+            // ACK received
+            curr_seq = 1 - curr_seq;
+            success = TRUE;
+            printf(">>> SUCCESS: I-%d acknowledged by RR-%d\n", 1 - curr_seq, curr_seq);
+            break;
         }
-
-        // If result was 0 (timeout) or REJ/Unexpected, we check for max attempts.
-        // We only manually increment if we hit REJ/Unexpected, otherwise it was done in alarmHandler.
-        if (result == expected_REJ_C || result != expected_RR_C)
+        else if (result == expected_REJ_C)
         {
+            // REJ received -> retransmit. Increment timeoutCount (this is an attempt).
             timeoutCount++;
+            printf(">>> Received REJ-%d - Retransmitting I-%d (retries so far: %d)\n", curr_seq, curr_seq, timeoutCount);
+            continue;
+        }
+        else
+        {
+            // Unexpected supervision frame: treat as a failed attempt and retry.
+            timeoutCount++;
+            printf(">>> Received unexpected supervision frame C=0x%02X - Retransmitting I-%d (retries so far: %d)\n", result, curr_seq, timeoutCount);
+            continue;
         }
     }
 
