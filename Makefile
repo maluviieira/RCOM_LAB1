@@ -9,8 +9,8 @@ BIN = bin/
 CABLE = cable/
 SRC = src/
 
-TX_SERIAL_PORT = /dev/ttyS10
-RX_SERIAL_PORT = /dev/ttyS11
+TX_SERIAL_PORT = /dev/ttyUSB0
+RX_SERIAL_PORT = /dev/ttyS0
 BAUD_RATE = 9600
 
 TX_FILE = penguin.gif
