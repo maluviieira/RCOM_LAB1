@@ -5,6 +5,8 @@
 #include <signal.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/select.h>
+#include <errno.h>
 
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
@@ -293,17 +295,51 @@ int read_DISC(int isEcho, int useTimeout)
 
 unsigned char readSupervisionFrame()
 {
+    if (serial_fd < 0) return 0;
+
     int step = START_STEP;
     unsigned char result = 0;
     unsigned char byte;
 
-    while (step != STOP_STEP && !timeoutFlag)
-    {
-        int bytes = readByteSerialPort(&byte);
+    // total timeout in seconds (use connection param)
+    int timeout_sec = connection_params.timeout > 0 ? connection_params.timeout : 1;
 
-        if (bytes > 0)
+    // We'll build the supervision frame state machine similar to previous code,
+    // but we wait using select() so blocking reads can't hang indefinitely.
+    fd_set readfds;
+    struct timeval tv;
+    int rv;
+
+    while (step != STOP_STEP)
+    {
+        FD_ZERO(&readfds);
+        FD_SET(serial_fd, &readfds);
+
+        tv.tv_sec = timeout_sec;
+        tv.tv_usec = 0;
+
+        rv = select(serial_fd + 1, &readfds, NULL, NULL, &tv);
+        if (rv == -1)
         {
-            printf(">>> Supervision frame byte: 0x%02X, state: %d\n", byte, step);
+            // select error
+            if (errno == EINTR)
+                continue; // interrupted by signal, try again
+            return 0;
+        }
+        else if (rv == 0)
+        {
+            // timeout reached => no supervision frame
+            return 0;
+        }
+        else
+        {
+            // data available
+            int bytes = readByteSerialPort(&byte);
+            if (bytes <= 0)
+            {
+                // no data read or error - treat as timeout/no-frame
+                return 0;
+            }
 
             switch (step)
             {
@@ -359,12 +395,16 @@ unsigned char readSupervisionFrame()
             case BCC1_STEP:
                 if (byte == FLAG)
                 {
-                    printf(">>> Complete supervision frame received: type=%d\n", result);
+                    step = STOP_STEP;
                     return result;
+                }
+                else if (byte == FLAG)
+                {
+                    step = FLAG_STEP;
                 }
                 else
                 {
-                    step = START_STEP; // Expected FLAG but didn't get it
+                    step = START_STEP;
                 }
                 break;
             default:
@@ -372,10 +412,9 @@ unsigned char readSupervisionFrame()
                 break;
             }
         }
-        // If bytes == 0, just continue (no data available)
     }
 
-    return 0; // Timeout or incomplete frame
+    return 0;
 }
 
 ////////////////////////////////////////////////
@@ -494,36 +533,37 @@ int llwrite(const unsigned char *buf, int bufSize)
     {
         // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, pos);
-        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, retransmissions + 1, connection_params.nRetransmissions + 1);
-
-        // Wait for supervision frame with timeout
-        timeoutFlag = 0;
-        printf(">>> Waiting for supervision frame (timeout: %ds)...\n", connection_params.timeout);
-        alarm(connection_params.timeout);
+        if (bytesWritten < 0)
+        {
+            printf(">>> writeBytesSerialPort() failed (errno %d). Aborting transmission.\n", errno);
+            connection_active = FALSE;
+            return -1;
+        }
+        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, retransmissions + 1, connection_params.nRetransmissions);
 
         unsigned char supervision_result = 0;
         int got_response = 0;
 
-        // SIMPLE LOOP: Just wait for response or timeout
-        while (!timeoutFlag && !got_response)
+        // Wait for supervision frame (select-based readSupervisionFrame)
+        while (!got_response)
         {
             supervision_result = readSupervisionFrame();
             if (supervision_result != 0)
             {
                 got_response = 1;
-                alarm(0); // Cancel timeout immediately
+            }
+            else
+            {
+                // No supervision frame received: increment retransmission count and break to retry
+                printf(">>> No supervision frame received within %d seconds\n", connection_params.timeout);
+                retransmissions++;
+                break;
             }
         }
-        alarm(0); // Ensure alarm is always cancelled
 
-        if (timeoutFlag)
+        if (!got_response)
         {
-            printf(">>> TIMEOUT #%d on attempt %d/%d\n", timeoutCount, retransmissions + 1, connection_params.nRetransmissions + 1);
-            retransmissions++;
-            if (retransmissions <= connection_params.nRetransmissions)
-            {
-                printf(">>> Retransmitting I-%d...\n", curr_seq);
-            }
+            // either we timed out and incremented retransmissions above, or write failed
             continue;
         }
 
