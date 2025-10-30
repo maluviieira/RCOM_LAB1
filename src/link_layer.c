@@ -288,127 +288,91 @@ int read_DISC(int isEcho, int useTimeout)
 
 unsigned char readSupervisionFrame()
 {
-    if (serial_fd < 0) return 0;
-
     int step = START_STEP;
     unsigned char result = 0;
     unsigned char byte;
 
-    // total timeout in seconds (use connection param)
-    int timeout_sec = connection_params.timeout > 0 ? connection_params.timeout : 1;
+    timeoutFlag = 0;
+    alarm(connection_params.timeout); // start timeout
 
-    // We'll build the supervision frame state machine similar to previous code,
-    // but we wait using select() so blocking reads can't hang indefinitely.
-    fd_set readfds;
-    struct timeval tv;
-    int rv;
-
-    while (step != STOP_STEP)
+    while (!timeoutFlag)
     {
-        FD_ZERO(&readfds);
-        FD_SET(serial_fd, &readfds);
+        int bytes = readByteSerialPort(&byte);
 
-        tv.tv_sec = timeout_sec;
-        tv.tv_usec = 0;
+        if (bytes <= 0)
+            continue; // no data yet
 
-        rv = select(serial_fd + 1, &readfds, NULL, NULL, &tv);
-        if (rv == -1)
+        switch (step)
         {
-            // select error
-            if (errno == EINTR)
-                continue; // interrupted by signal, try again
-            return 0;
-        }
-        else if (rv == 0)
-        {
-            // timeout reached => no supervision frame
-            return 0;
-        }
-        else
-        {
-            // data available
-            int bytes = readByteSerialPort(&byte);
-            if (bytes <= 0)
-            {
-                // no data read or error - treat as timeout/no-frame
-                return 0;
-            }
-
-            switch (step)
-            {
-            case START_STEP:
-                if (byte == FLAG)
-                    step = FLAG_STEP;
-                break;
-            case FLAG_STEP:
-                if (byte == A)
-                    step = A_STEP;
-                else if (byte != FLAG)
-                    step = START_STEP;
-                break;
-            case A_STEP:
-                if (byte == C_RR0)
-                {
-                    step = C_STEP;
-                    result = 1;
-                }
-                else if (byte == C_RR1)
-                {
-                    step = C_STEP;
-                    result = 2;
-                }
-                else if (byte == C_REJ0)
-                {
-                    step = C_STEP;
-                    result = 3;
-                }
-                else if (byte == C_REJ1)
-                {
-                    step = C_STEP;
-                    result = 4;
-                }
-                else if (byte == FLAG)
-                    step = FLAG_STEP;
-                else
-                    step = START_STEP;
-                break;
-            case C_STEP:
-                if ((result == 1 && byte == BCC1_RR0) ||
-                    (result == 2 && byte == BCC1_RR1) ||
-                    (result == 3 && byte == BCC1_REJ0) ||
-                    (result == 4 && byte == BCC1_REJ1))
-                {
-                    step = BCC1_STEP;
-                }
-                else if (byte == FLAG)
-                    step = FLAG_STEP;
-                else
-                    step = START_STEP;
-                break;
-            case BCC1_STEP:
-                if (byte == FLAG)
-                {
-                    step = STOP_STEP;
-                    return result;
-                }
-                else if (byte == FLAG)
-                {
-                    step = FLAG_STEP;
-                }
-                else
-                {
-                    step = START_STEP;
-                }
-                break;
-            default:
+        case START_STEP:
+            if (byte == FLAG)
+                step = FLAG_STEP;
+            break;
+        case FLAG_STEP:
+            if (byte == A)
+                step = A_STEP;
+            else if (byte != FLAG)
                 step = START_STEP;
-                break;
+            break;
+        case A_STEP:
+            if (byte == C_RR0)
+            {
+                step = C_STEP;
+                result = 1;
             }
+            else if (byte == C_RR1)
+            {
+                step = C_STEP;
+                result = 2;
+            }
+            else if (byte == C_REJ0)
+            {
+                step = C_STEP;
+                result = 3;
+            }
+            else if (byte == C_REJ1)
+            {
+                step = C_STEP;
+                result = 4;
+            }
+            else if (byte == FLAG)
+                step = FLAG_STEP;
+            else
+                step = START_STEP;
+            break;
+        case C_STEP:
+            if ((result == 1 && byte == BCC1_RR0) ||
+                (result == 2 && byte == BCC1_RR1) ||
+                (result == 3 && byte == BCC1_REJ0) ||
+                (result == 4 && byte == BCC1_REJ1))
+                step = BCC1_STEP;
+            else if (byte == FLAG)
+                step = FLAG_STEP;
+            else
+                step = START_STEP;
+            break;
+        case BCC1_STEP:
+            if (byte == FLAG)
+            {
+                alarm(0); // stop timeout
+                return result;
+            }
+            else if (byte == FLAG)
+                step = FLAG_STEP;
+            else
+                step = START_STEP;
+            break;
+        default:
+            step = START_STEP;
+            break;
         }
     }
 
+    // timeout occurred
+    alarm(0);
     return 0;
 }
+
 
 ////////////////////////////////////////////////
 // LLOPEN
