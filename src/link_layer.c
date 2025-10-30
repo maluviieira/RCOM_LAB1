@@ -1,5 +1,5 @@
 // MISC
-#define _POSIX_SOURCE 1 // POSIX compliant source
+#define _POSIX_SOURCE 1 
 
 #include "link_layer.h"
 #include "serial_port.h"
@@ -8,11 +8,12 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#include <stdlib.h> // For malloc/free
+#include <stdlib.h>
 
 // --- CONSTANTS AND MACROS (Assuming these are in link_layer.h) ---
 #define TRUE 1
 #define FALSE 0
+#define MAX_PAYLOAD_SIZE 1024 // Assuming a default max packet size
 
 #define STUFF_BYTE 0x20
 
@@ -32,7 +33,7 @@
 #define C_I0 0x00
 #define C_I1 0x80
 
-// BCC1 calculation for Command Frames (A ^ C)
+// BCC1 calculation for Command Frames
 #define BCC1_SET (A ^ C_SET)
 #define BCC1_DISC (A ^ C_DISC)
 
@@ -57,22 +58,21 @@
 #define ESCAPE_STEP 6
 #define STOP_STEP 7
 
-// --- GLOBAL VARIABLES (As used in your original file) ---
+// --- GLOBAL VARIABLES ---
 unsigned char SET[5] = {FLAG, A, C_SET, BCC1_SET, FLAG};
-unsigned char UA_reply[5] = {FLAG, A_Rt, C_UA, BCC1_UA_t, FLAG}; // UA sent by Tx to finish close
-unsigned char UA_cmd[5] = {FLAG, A, C_UA, BCC1_UA_r, FLAG};      // UA sent by Rx to ack SET
+unsigned char UA_reply[5] = {FLAG, A_Rt, C_UA, BCC1_UA_t, FLAG};
+unsigned char UA_cmd[5] = {FLAG, A, C_UA, BCC1_UA_r, FLAG};
 
-unsigned char DISC_cmd[5] = {FLAG, A, C_DISC, BCC1_DISC, FLAG};           // DISC sent by Tx
-unsigned char DISC_reply[5] = {FLAG, A_Rt, C_DISC, BCC1_DISC_t, FLAG}; // DISC sent by Rx
+unsigned char DISC_cmd[5] = {FLAG, A, C_DISC, BCC1_DISC, FLAG};
+unsigned char DISC_reply[5] = {FLAG, A_Rt, C_DISC, BCC1_DISC_t, FLAG};
 
-// Supervision frames (Replies from Receiver A_Rt, but checking the Reply A field from Tx)
-unsigned char RR0_t[5] = {FLAG, A, C_RR0, BCC1_RR0_r, FLAG};    // Expected by Tx for next seq 1 (Nr=0 for I0 ack)
-unsigned char RR1_t[5] = {FLAG, A, C_RR1, BCC1_RR1_r, FLAG};    // Expected by Tx for next seq 0 (Nr=1 for I1 ack)
-unsigned char REJ0_t[5] = {FLAG, A, C_REJ0, BCC1_REJ0_r, FLAG}; // Expected by Tx for I0 retransmission
-unsigned char REJ1_t[5] = {FLAG, A, C_REJ1, BCC1_REJ1_r, FLAG}; // Expected by Tx for I1 retransmission
+// Supervision frames (Rx Replies, using A=0x03)
+unsigned char RR0_t[5] = {FLAG, A, C_RR0, BCC1_RR0_r, FLAG}; 
+unsigned char RR1_t[5] = {FLAG, A, C_RR1, BCC1_RR1_r, FLAG};
+unsigned char REJ0_t[5] = {FLAG, A, C_REJ0, BCC1_REJ0_r, FLAG};
+unsigned char REJ1_t[5] = {FLAG, A, C_REJ1, BCC1_REJ1_r, FLAG};
 
-
-volatile int curr_seq = 0; // Current Tx sequence number (0 or 1)
+volatile int curr_seq = 0; 
 volatile int connection_active = FALSE;
 static int serial_fd = -1;
 
@@ -84,27 +84,23 @@ volatile int timeoutCount = 0;
 
 // --- HELPER FUNCTIONS ---
 
-// FIX 1: The alarm handler now uses a simpler implementation
 void alarmHandler(int signal)
 {
-    // The sigaction setup ensures this interrupts the blocking read.
     timeoutFlag = 1;
     timeoutCount++;
     printf(">>> TIMEOUT #%d - No response received\n", timeoutCount);
 }
 
-// FIX 2: Function to set up the alarm handler with no SA_RESTART
 void setupAlarmHandler() {
     struct sigaction sa;
     sa.sa_handler = alarmHandler; 
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0; // Explicitly do NOT set SA_RESTART
+    sa.sa_flags = 0; // Ensures SIGALRM interrupts blocking read (EINTR)
 
     if (sigaction(SIGALRM, &sa, NULL) == -1) {
         perror("Error setting up SIGALRM handler");
     }
 }
-
 
 void stuffAndAddByte(unsigned char byte, unsigned char *frame, int *idx)
 {
@@ -129,14 +125,15 @@ unsigned char BCC2(const unsigned char *data, int size)
     return bcc;
 }
 
-
-// --- STATE MACHINE READERS (Simplified & Fixed) ---
-
-// General state machine for reading a fixed 5-byte supervision frame
-// Expected A is the Address field (A or A_Rt)
-// Expected C is the Control field (C_UA, C_DISC, etc.)
-// Returns 1 on success, 0 on timeout/error
-int read_supervision_frame(unsigned char expectedA, unsigned char expectedC, unsigned char expectedBCC1, int useTimeout)
+/**
+ * @brief Reads a single supervision frame from the serial port.
+ * * @param expectedA The A field expected (e.g., A for Rx Replies, A_Rt for Tx Replies).
+ * @param expectedC The C field expected (e.g., C_UA, C_DISC, C_RR0/1, C_REJ0/1).
+ * @param expectedBCC1 The BCC1 expected (pre-calculated).
+ * @param useTimeout If TRUE, sets an alarm and returns 0 on timeout.
+ * @return The C field (expectedC) on success, 0 on timeout/failure.
+ */
+unsigned char read_supervision_frame(unsigned char expectedA, unsigned char expectedC, unsigned char expectedBCC1, int useTimeout)
 {
     int step = START_STEP;
 
@@ -146,9 +143,9 @@ int read_supervision_frame(unsigned char expectedA, unsigned char expectedC, uns
         alarm(connection_params.timeout);
     }
     
-    // Check if expected frame is UA (different BCC1 depending on role)
+    // Ensure the BCC1 is correct for the UA frame when checking Tx's reply
     if (expectedC == C_UA && expectedA == A) {
-        expectedBCC1 = (connection_params.role == LlTx) ? BCC1_UA_r : BCC1_UA_t;
+        expectedBCC1 = BCC1_UA_r;
     }
 
     while (!useTimeout || !timeoutFlag)
@@ -156,7 +153,7 @@ int read_supervision_frame(unsigned char expectedA, unsigned char expectedC, uns
         unsigned char byte;
         int bytesRead = readByteSerialPort(&byte);
 
-        // FIX 3: Check for interrupt/error immediately
+        // FIX: Check for interrupt/error immediately
         if (bytesRead < 0) {
             if (errno == EINTR) {
                 // Interrupted by SIGALRM, loop condition will now check timeoutFlag
@@ -201,7 +198,7 @@ int read_supervision_frame(unsigned char expectedA, unsigned char expectedC, uns
                 {
                     if (useTimeout)
                         alarm(0);
-                    return 1; // success
+                    return expectedC; // success: return the C field
                 }
                 else
                     step = START_STEP;
@@ -227,7 +224,7 @@ int llopen(LinkLayer connectionParameters)
 {
     connection_params = connectionParameters;
     
-    // FIX 2: Set up the alarm handler once
+    // FIX 1: Set up the alarm handler once
     setupAlarmHandler();
 
     if (connectionParameters.role == LlTx)
@@ -235,14 +232,14 @@ int llopen(LinkLayer connectionParameters)
         serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
         if (serial_fd < 0) return -1;
 
-        timeoutCount = 0; // Reset global attempt counter
+        timeoutCount = 0; 
         while (timeoutCount <= connection_params.nRetransmissions) 
         {
             // Send SET
             writeBytesSerialPort(SET, 5);
             printf("SET sent (attempt %d/%d)\n", timeoutCount + 1, connection_params.nRetransmissions + 1);
 
-            // Wait for UA (A field = A, C field = C_UA)
+            // Wait for UA (Expected: A=A, C=C_UA)
             if (read_supervision_frame(A, C_UA, BCC1_UA_r, TRUE)) 
             {
                 printf("Received UA - Connection established!\n");
@@ -250,8 +247,7 @@ int llopen(LinkLayer connectionParameters)
                 return serial_fd;
             }
             
-            // If timeout occurred, the loop continues to retransmit
-            if (timeoutCount > connection_params.nRetransmissions) break;
+            if (timeoutCount >= connection_params.nRetransmissions) break;
             printf("TIMEOUT on attempt %d/%d - Retransmitting SET\n", timeoutCount, connection_params.nRetransmissions + 1);
         }
 
@@ -284,13 +280,13 @@ int llopen(LinkLayer connectionParameters)
 }
 
 ////////////////////////////////////////////////
-// LLWRITE
+// LLWRITE - FIX APPLIED
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
     if (!connection_active || serial_fd < 0) return -1;
 
-    // 1. Build the frame (Same as before)
+    // 1. Build the frame
     int maxStuffedSize = 5 + (bufSize * 2) + 2;
     unsigned char *stuffedFrame = (unsigned char *)malloc(maxStuffedSize);
     if (!stuffedFrame) return -1;
@@ -321,9 +317,9 @@ int llwrite(const unsigned char *buf, int bufSize)
     int success = FALSE;
 
     // Determine the expected reply C fields
-    unsigned char expected_RR = (curr_seq == 0) ? C_RR1 : C_RR0;
-    unsigned char expected_REJ = (curr_seq == 0) ? C_REJ0 : C_REJ1;
-    // Determine the expected BCC1 for the reply frame
+    unsigned char expected_RR_C = (curr_seq == 0) ? C_RR1 : C_RR0;
+    unsigned char expected_REJ_C = (curr_seq == 0) ? C_REJ0 : C_REJ1;
+    // Determine the expected BCC1 for the reply frame (A=0x03)
     unsigned char expected_BCC1_RR = (curr_seq == 0) ? BCC1_RR1_r : BCC1_RR0_r;
     unsigned char expected_BCC1_REJ = (curr_seq == 0) ? BCC1_REJ0_r : BCC1_REJ1_r;
 
@@ -341,61 +337,41 @@ int llwrite(const unsigned char *buf, int bufSize)
         printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, timeoutCount + 1, connection_params.nRetransmissions + 1);
 
         // --- Start Waiting for ACK/NACK (A=A, C=RR/REJ) ---
-        timeoutFlag = 0;
-        alarm(connection_params.timeout);
         
-        int result = 0; // 1 for success, 0 for failure
-
-        // We use a small loop relying on the fact that if any of the expected frames
-        // are detected by read_supervision_frame, the alarm will be cancelled internally.
-        while (!timeoutFlag) 
-        {
-            unsigned char byte;
-            int bytesRead = readByteSerialPort(&byte);
-
-            if (bytesRead < 0) {
-                if (errno == EINTR) continue; // Alarm interrupted read
-                break; // Other fatal error
-            }
-
-            if (bytesRead > 0)
-            {
-                // We run specialized SMs that only look for the expected frames.
-                // Since read_supervision_frame returns 1 on success, we check the C field.
-                
-                // Check for expected RR
-                if (read_supervision_frame(A, expected_RR, expected_BCC1_RR, FALSE)) {
-                    result = expected_RR; // RR received
-                    break;
-                }
-                // Check for expected REJ
-                if (read_supervision_frame(A, expected_REJ, expected_BCC1_REJ, FALSE)) {
-                    result = expected_REJ; // REJ received
-                    break;
-                }
-            }
+        // Check for RR
+        unsigned char result = read_supervision_frame(A, expected_RR_C, expected_BCC1_RR, TRUE);
+        
+        if (result == 0) {
+            // Timeout occurred, check for REJ (in case multiple responses are buffered)
+            result = read_supervision_frame(A, expected_REJ_C, expected_BCC1_REJ, FALSE); 
+            
+            // Note: read_supervision_frame cancels its own alarm, so we don't need alarm(0) here.
+            
+            // If result is still 0, it means genuine timeout/loss. timeoutCount was already incremented in alarmHandler.
         }
-        
-        alarm(0); // Cancel alarm before processing result
 
         // Process the supervision frame result
         if (result != 0)
         {
-            if (result == expected_RR) {
-                curr_seq = 1 - curr_seq; // Toggle sequence number for next frame
+            if (result == expected_RR_C) {
+                curr_seq = 1 - curr_seq; 
                 success = TRUE;
                 printf(">>> SUCCESS: I-%d acknowledged by RR-%d\n", 1 - curr_seq, curr_seq);
                 break;
-            } else if (result == expected_REJ) {
+            } else if (result == expected_REJ_C) {
                 printf(">>> Received REJ-%d - Retransmitting I-%d\n", curr_seq, curr_seq);
                 // Retransmission count increments below
             } else {
-                // If it was another frame (e.g., RR for the old sequence), treat as loss/error
+                // Should not happen, but treat as loss
                 printf(">>> Received unexpected frame (C=0x%02X) - Retransmitting I-%d\n", result, curr_seq);
             }
         }
         
-        timeoutCount++;
+        // If result was 0 (timeout) or REJ/Unexpected, we check for max attempts.
+        // We only manually increment if we hit REJ/Unexpected, otherwise it was done in alarmHandler.
+        if (result == expected_REJ_C || result != expected_RR_C) {
+             timeoutCount++;
+        }
     }
 
     free(stuffedFrame);
@@ -404,7 +380,6 @@ int llwrite(const unsigned char *buf, int bufSize)
         return frameLength;
     } else {
         printf(">>> FAILED to transmit I-%d after %d retransmissions. Closing connection.\n", curr_seq, connection_params.nRetransmissions);
-        // Clean up connection on failure
         if (serial_fd >= 0) {
             closeSerialPort();
             serial_fd = -1;
@@ -415,7 +390,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 }
 
 ////////////////////////////////////////////////
-// LLREAD
+// LLREAD - FIXED 
 ////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
@@ -423,7 +398,6 @@ int llread(unsigned char *packet)
 
     static int expected_Ns = 0; 
     
-    // Loop until a correct, new I-frame is received
     while (TRUE) 
     {
         int step = START_STEP;
@@ -432,7 +406,6 @@ int llread(unsigned char *packet)
         unsigned char buffer[MAX_PAYLOAD_SIZE]; 
         int is_duplicate = FALSE;
         
-        // Loop to read one complete frame (I or DISC)
         while (step != STOP_STEP)
         {
             unsigned char byte;
@@ -455,7 +428,7 @@ int llread(unsigned char *packet)
                         else if (byte != FLAG) step = START_STEP;
                         break;
                     case A_STEP:
-                        // Check for I-frame (C_I0/C_I1) or DISC frame (A=0x03)
+                        // Check for I-frame (A=0x03) or DISC frame
                         if (byte == C_I0 || byte == C_I1) {
                             control = byte;
                             step = C_STEP;
@@ -463,7 +436,7 @@ int llread(unsigned char *packet)
                             // Termination request detected, reply DISC and let app handle llclose
                             writeBytesSerialPort(DISC_reply, 5); 
                             printf("Rx received DISC, sent DISC reply.\n");
-                            return 0; // Signal application layer to handle termination
+                            return 0; 
                         } else if (byte == FLAG) step = FLAG_STEP;
                         else step = START_STEP;
                         break;
@@ -476,20 +449,19 @@ int llread(unsigned char *packet)
                                 is_duplicate = TRUE;
                             }
                             step = DATA_STEP;
-                            data_index = 0; // Start storing data and BCC2
+                            data_index = 0;
                         }
                         else if (byte == FLAG) step = FLAG_STEP;
-                        else step = START_STEP; // BCC1 incorrect - discard frame
+                        else step = START_STEP;
                         break;
 
                     case DATA_STEP:
                         if (byte == ESC) {
                             step = ESCAPE_STEP;
                         } else if (byte == FLAG) {
-                            // End of frame reached - process and check BCC2
-                            step = STOP_STEP; // Temporarily exit inner loop for processing
+                            step = STOP_STEP;
                             
-                            if (data_index < 1) { // Frame too short (must at least contain BCC2)
+                            if (data_index < 1) { 
                                 step = START_STEP; 
                                 continue;
                             }
@@ -499,7 +471,6 @@ int llread(unsigned char *packet)
                             
                             unsigned char calc_bcc2 = BCC2(buffer, data_size);
                             
-                            // Check BCC2 (Data Error Check)
                             if (received_bcc2 == calc_bcc2) 
                             {
                                 // BCC2 CORRECT
@@ -509,30 +480,29 @@ int llread(unsigned char *packet)
                                     memcpy(packet, buffer, data_size);
                                     unsigned char *rr_frame = (expected_Ns == 0) ? RR1_t : RR0_t;
                                     writeBytesSerialPort(rr_frame, 5);
-                                    expected_Ns = 1 - expected_Ns; // Toggle expected Ns
-                                    return data_size; // Return accepted data
+                                    expected_Ns = 1 - expected_Ns; 
+                                    return data_size; 
                                 } else {
                                     // DUPLICATE frame - Discard data and send RR for current expected seq
                                     unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                     writeBytesSerialPort(rr_frame, 5);
-                                    step = START_STEP; // Continue to next frame
+                                    step = START_STEP;
                                 }
                             } else {
-                                // BCC2 INCORRECT (Data Error)
+                                // BCC2 INCORRECT
                                 if (!is_duplicate) {
-                                    // NEW frame with error - Send REJ to request retransmission
+                                    // NEW frame with error - Send REJ 
                                     unsigned char received_Ns = (control == C_I1) ? 1 : 0;
                                     unsigned char *rej_frame = (received_Ns == 0) ? REJ0_t : REJ1_t;
                                     writeBytesSerialPort(rej_frame, 5);
                                 } else {
-                                    // DUPLICATE frame with error - Send RR for current expected seq (to confirm reception of earlier frame)
+                                    // DUPLICATE frame with error - Send RR 
                                     unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                     writeBytesSerialPort(rr_frame, 5);
                                 }
-                                step = START_STEP; // Continue to next frame
+                                step = START_STEP;
                             }
                         } else {
-                            // Normal data byte - store it
                             if (data_index < MAX_PAYLOAD_SIZE) {
                                 buffer[data_index++] = byte;
                             } else {
@@ -542,7 +512,6 @@ int llread(unsigned char *packet)
                         break;
 
                     case ESCAPE_STEP:
-                        // De-stuffing logic
                         byte = byte ^ STUFF_BYTE;
                         if (data_index < MAX_PAYLOAD_SIZE) {
                             buffer[data_index++] = byte;
@@ -563,13 +532,12 @@ int llread(unsigned char *packet)
 }
 
 ////////////////////////////////////////////////
-// LLCLOSE
+// LLCLOSE - FIXED
 ////////////////////////////////////////////////
 int llclose()
 {
     if (!connection_active || serial_fd < 0) return -1;
 
-    // Ensure initial state is clean for Tx
     int tx_success = FALSE;
     timeoutCount = 0;
 
@@ -581,7 +549,7 @@ int llclose()
             writeBytesSerialPort(DISC_cmd, 5);
             printf("Tx sent DISC (attempt %d/%d)\n", timeoutCount + 1, connection_params.nRetransmissions + 1);
 
-            // 2. Wait for Rx's DISC reply
+            // 2. Wait for Rx's DISC reply (Expected: A=A_Rt, C=C_DISC)
             if (read_supervision_frame(A_Rt, C_DISC, BCC1_DISC_t, TRUE)) 
             {
                 printf("Tx received DISC reply.\n");
@@ -591,7 +559,7 @@ int llclose()
                 tx_success = TRUE;
                 break;
             }
-            if (timeoutCount > connection_params.nRetransmissions) break;
+            if (timeoutCount >= connection_params.nRetransmissions) break;
             printf("TIMEOUT - Retransmitting DISC\n");
         }
         
@@ -601,9 +569,10 @@ int llclose()
     }
     else // LlRx
     {
-        // Rx receives DISC from llread (returning 0) and is handled there.
-        // It then waits for the final UA from Tx (no retransmission/timeout needed here).
+        // Rx relies on llread returning 0 to trigger app layer close, 
+        // which then triggers this function. We just need to wait for final UA.
         printf("Rx waiting for final UA...\n");
+        // Wait for final UA from Tx (Expected: A=A_Rt, C=C_UA)
         if (read_supervision_frame(A_Rt, C_UA, BCC1_UA_t, FALSE))
         {
             printf("Rx received final UA.\n");
@@ -613,7 +582,6 @@ int llclose()
         }
     }
 
-    // Common cleanup
     if (closeSerialPort() == -1) {
         return -1;
     }
