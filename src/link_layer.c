@@ -550,7 +550,7 @@ int llclose()
             printf("Tx sent DISC (attempt %d/%d)\n", timeoutCount + 1, connection_params.nRetransmissions + 1);
 
             // 2. Wait for Rx's DISC reply (Expected: A=A_Rt, C=C_DISC)
-            if (read_supervision_frame(A_Rt, C_DISC, BCC1_DISC_t, TRUE)) 
+            if (read_supervision_frame(A, C_DISC, BCC1_DISC_t, TRUE)) 
             {
                 printf("Tx received DISC reply.\n");
                 // 3. Send final UA
