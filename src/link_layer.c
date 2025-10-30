@@ -473,6 +473,7 @@ int llread(unsigned char *packet)
                         if (received_Ns != expected_Ns)
                         {
                             is_duplicate = TRUE;
+                            printf("Duplicate Frame (received_Ns %d != %d expected_Ns) - discarding\n", received_Ns, expected_Ns);
                         }
                         step = DATA_STEP;
                         data_index = 0;
@@ -520,6 +521,7 @@ int llread(unsigned char *packet)
                                 // DUPLICATE frame - Discard data and send RR for current expected seq
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
+                                printf("Duplicate\n");
                                 step = START_STEP;
                             }
                         }
@@ -538,6 +540,7 @@ int llread(unsigned char *packet)
                                 // DUPLICATE frame with error - Send RR
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
+                                printf("Duplicate\n");
                             }
                             step = START_STEP;
                         }
