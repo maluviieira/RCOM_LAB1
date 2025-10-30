@@ -605,9 +605,11 @@ int llclose()
             writeBytesSerialPort(DISC_cmd, 5);
             printf("Tx sent DISC (attempt %d/%d)\n", timeoutCount + 1, connection_params.nRetransmissions + 1);
 
-            if (read_supervision_frame(A, C_DISC, BCC1_DISC, TRUE))
+            // 2. read DISC reply
+            if (read_supervision_frame(A_Rt, C_DISC, BCC1_DISC_t, TRUE))
             {
                 printf("Tx received DISC reply.\n");
+                
                 // 3. Send final UA
                 writeBytesSerialPort(UA_reply, 5);
                 printf("Tx sent final UA.\n");
