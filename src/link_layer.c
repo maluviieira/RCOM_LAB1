@@ -10,11 +10,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-// --- CONSTANTS AND MACROS (Assuming these are in link_layer.h) ---
-#define TRUE 1
-#define FALSE 0
-#define MAX_PAYLOAD_SIZE 1024 // Assuming a default max packet size
-
 #define STUFF_BYTE 0x20
 
 #define FLAG 0x7E
@@ -238,11 +233,11 @@ int llopen(LinkLayer connectionParameters)
             return -1;
 
         timeoutCount = 0;
-        while (timeoutCount <= connection_params.nRetransmissions)
+        while (timeoutCount < connection_params.nRetransmissions)
         {
             // Send SET
             writeBytesSerialPort(SET, 5);
-            printf("SET sent (attempt %d/%d)\n", timeoutCount + 1, connection_params.nRetransmissions + 1);
+            printf("SET sent (attempt %d/%d)\n", timeoutCount + 1, connection_params.nRetransmissions);
 
             // Wait for UA (Expected: A=A, C=C_UA)
             if (read_supervision_frame(A, C_UA, BCC1_UA_r, TRUE))
@@ -254,7 +249,7 @@ int llopen(LinkLayer connectionParameters)
 
             if (timeoutCount >= connection_params.nRetransmissions)
                 break;
-            printf("TIMEOUT on attempt %d/%d - Retransmitting SET\n", timeoutCount, connection_params.nRetransmissions + 1);
+            printf("TIMEOUT on attempt %d/%d - Retransmitting SET\n", timeoutCount, connection_params.nRetransmissions);
         }
 
         printf("Connection failed after %d attempts\n", connection_params.nRetransmissions);
@@ -335,7 +330,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
 
-    while (timeoutCount <= connection_params.nRetransmissions)
+    while (timeoutCount < connection_params.nRetransmissions)
     {
         // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, frameLength);
@@ -344,7 +339,7 @@ int llwrite(const unsigned char *buf, int bufSize)
             free(stuffedFrame);
             return -1;
         }
-        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, timeoutCount + 1, connection_params.nRetransmissions + 1);
+        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, timeoutCount + 1, connection_params.nRetransmissions);
 
         // Wait for RR or REJ (first try waiting for RR with timeout).
         unsigned char result = read_supervision_frame(A, expected_RR_C, expected_BCC1_RR, TRUE);
@@ -354,7 +349,7 @@ int llwrite(const unsigned char *buf, int bufSize)
             // A genuine timeout occurred. alarmHandler already incremented timeoutCount.
             // Do NOT block trying to check for REJ (that could hang while channel is down).
             // We'll retransmit in the next iteration if max not reached.
-            printf(">>> Timeout waiting for RR-%d (attempt %d/%d)\n", (curr_seq == 0) ? 1 : 0, timeoutCount, connection_params.nRetransmissions + 1);
+            printf(">>> Timeout waiting for RR-%d (attempt %d/%d)\n", (curr_seq == 0) ? 1 : 0, timeoutCount, connection_params.nRetransmissions);
             continue;
         }
 
@@ -594,11 +589,11 @@ int llclose()
 
     if (connection_params.role == LlTx)
     {
-        while (timeoutCount <= connection_params.nRetransmissions)
+        while (timeoutCount < connection_params.nRetransmissions)
         {
             // 1. Send DISC frame
             writeBytesSerialPort(DISC_cmd, 5);
-            printf("Tx sent DISC (attempt %d/%d)\n", timeoutCount + 1, connection_params.nRetransmissions + 1);
+            printf("Tx sent DISC (attempt %d/%d)\n", timeoutCount + 1, connection_params.nRetransmissions);
 
             // 2. read DISC reply
             if (read_supervision_frame(A_Rt, C_DISC, BCC1_DISC_t, TRUE))
