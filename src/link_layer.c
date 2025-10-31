@@ -10,11 +10,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-// --- CONSTANTS AND MACROS (Assuming these are in link_layer.h) ---
-#define TRUE 1
-#define FALSE 0
-#define MAX_PAYLOAD_SIZE 1024 // Assuming a default max packet size
-
 #define STUFF_BYTE 0x20
 
 #define FLAG 0x7E
@@ -238,7 +233,7 @@ int llopen(LinkLayer connectionParameters)
             return -1;
 
         timeoutCount = 0;
-        while (timeoutCount < connection_params.nRetransmissions)
+        while (timeoutCount <= connection_params.nRetransmissions)
         {
             // Send SET
             writeBytesSerialPort(SET, 5);
@@ -351,15 +346,12 @@ int llwrite(const unsigned char *buf, int bufSize)
 
         if (result == 0)
         {
-            // A genuine timeout occurred. alarmHandler already incremented timeoutCount.
-            // Do NOT block trying to check for REJ (that could hang while channel is down).
-            // We'll retransmit in the next iteration if max not reached.
             printf(">>> Timeout waiting for RR-%d (attempt %d/%d)\n", (curr_seq == 0) ? 1 : 0, timeoutCount, connection_params.nRetransmissions);
             continue;
         }
 
         // If we received something, check what it was.
-        if (result == expected_RR_C)
+        else if (result == expected_RR_C)
         {
             // ACK received
             curr_seq = 1 - curr_seq;
@@ -594,7 +586,7 @@ int llclose()
 
     if (connection_params.role == LlTx)
     {
-        while (timeoutCount < connection_params.nRetransmissions)
+        while (timeoutCount <= connection_params.nRetransmissions)
         {
             // 1. Send DISC frame
             writeBytesSerialPort(DISC_cmd, 5);
