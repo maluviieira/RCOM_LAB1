@@ -326,7 +326,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned char expected_REJ_C = (curr_seq == 0) ? C_REJ0 : C_REJ1;
     // Determine the expected BCC1 for the reply frame (A=0x03)
     unsigned char expected_BCC1_RR = (curr_seq == 0) ? BCC1_RR1_r : BCC1_RR0_r;
-    unsigned char expected_BCC1_REJ = (curr_seq == 0) ? BCC1_REJ0_r : BCC1_REJ1_r;
+    //unsigned char expected_BCC1_REJ = (curr_seq == 0) ? BCC1_REJ0_r : BCC1_REJ1_r;
 
     printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
 
@@ -410,7 +410,6 @@ int llread(unsigned char *packet)
         int data_index = 0;
         unsigned char control = 0;
         unsigned char buffer[MAX_PAYLOAD_SIZE];
-        int is_duplicate = FALSE;
         int received_Ns = 0;
 
         while (step != STOP_STEP)
