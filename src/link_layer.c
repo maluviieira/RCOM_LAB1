@@ -500,9 +500,10 @@ int llread(unsigned char *packet)
                         if (received_bcc2 == calc_bcc2)
                         {
                             // BCC2 CORRECT
-                            if (!is_duplicate)
+                            if (received_Ns == expected_Ns)
                             {
                                 // NEW frame - Accept data and send RR for next seq
+                                printf(">>> Received new frame. Sending RR-%d.\n", received_Ns);
                                 memcpy(packet, buffer, data_size);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR1_t : RR0_t;
                                 writeBytesSerialPort(rr_frame, 5);
@@ -512,9 +513,9 @@ int llread(unsigned char *packet)
                             else
                             {
                                 // DUPLICATE frame - Discard data and send RR for current expected seq
+                                printf(">>> Received duplicate frame. Sending RR-%d.\n", received_Ns);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
-                                printf("Duplicate\n");
                                 step = START_STEP;
                             }
                         }
