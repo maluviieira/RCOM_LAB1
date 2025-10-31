@@ -464,7 +464,6 @@ int llread(unsigned char *packet)
 
                         if (received_Ns != expected_Ns)
                         {
-                            is_duplicate = TRUE;
                             printf("Duplicate Frame (received_Ns %d != %d expected_Ns) - discarding\n", received_Ns, expected_Ns);
                         }
                         step = DATA_STEP;
