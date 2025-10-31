@@ -309,8 +309,9 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     // 2. Transmit and wait for ACK/NACK
     int bytesWritten = -1;
-    timeoutCount = 0;
+    //timeoutCount = 0;
     int success = FALSE;
+    int attempts = 0;
 
     // expected reply C fields
     unsigned char expected_RR_C = (curr_seq == 0) ? C_RR1 : C_RR0;
@@ -321,7 +322,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
 
-    while (timeoutCount <= connection_params.nRetransmissions)
+    while (attempts <= connection_params.nRetransmissions)
     {
         // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, frameLength);
@@ -330,7 +331,7 @@ int llwrite(const unsigned char *buf, int bufSize)
             free(stuffedFrame);
             return -1;
         }
-        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, timeoutCount + 1, connection_params.nRetransmissions + 1);
+        printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, attempts + 1, connection_params.nRetransmissions + 1);
 
         // Wait for RR or REJ
         unsigned char result = read_supervision_frame(A, expected_RR_C, expected_BCC1_RR, TRUE);
@@ -340,7 +341,9 @@ int llwrite(const unsigned char *buf, int bufSize)
             // A genuine timeout occurred. alarmHandler already incremented timeoutCount.
             // Do NOT block trying to check for REJ (that could hang while channel is down).
             // We'll retransmit in the next iteration if max not reached.
-            printf(">>> Timeout waiting for RR-%d (attempt %d/%d)\n", (curr_seq == 0) ? 1 : 0, timeoutCount, connection_params.nRetransmissions + 1);
+            attempts++;
+            if (attempts > connection_params.nRetransmissions) break;
+            printf(">>> Timeout waiting for RR-%d (attempt %d/%d)\n", (curr_seq == 0) ? 1 : 0, attempts, connection_params.nRetransmissions + 1);
             continue;
         }
 
@@ -356,15 +359,17 @@ int llwrite(const unsigned char *buf, int bufSize)
         else if (result == expected_REJ_C)
         {
             // REJ received -> retransmit. Increment timeoutCount (this is an attempt).
-            timeoutCount++;
-            printf(">>> Received REJ-%d - Retransmitting I-%d (retries so far: %d)\n", curr_seq, curr_seq, timeoutCount);
+            attempts++;
+            if (attempts > connection_params.nRetransmissions) break;
+            printf(">>> Received REJ-%d - Retransmitting I-%d (retries so far: %d)\n", curr_seq, curr_seq, attempts);
             continue;
         }
         else
         {
             // Unexpected supervision frame: treat as a failed attempt and retry.
-            timeoutCount++;
-            printf(">>> Received unexpected supervision frame C=0x%02X - Retransmitting I-%d (retries so far: %d)\n", result, curr_seq, timeoutCount);
+            attempts++;
+            if (attempts > connection_params.nRetransmissions) break;
+            printf(">>> Received unexpected supervision frame C=0x%02X - Retransmitting I-%d (retries so far: %d)\n", result, curr_seq, attempts);
             continue;
         }
     }
