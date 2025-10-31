@@ -10,6 +10,11 @@
 #include <string.h>
 #include <stdlib.h>
 
+// --- CONSTANTS AND MACROS (Assuming these are in link_layer.h) ---
+#define TRUE 1
+#define FALSE 0
+#define MAX_PAYLOAD_SIZE 1024 // Assuming a default max packet size
+
 #define STUFF_BYTE 0x20
 
 #define FLAG 0x7E
