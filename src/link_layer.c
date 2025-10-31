@@ -10,10 +10,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-// --- CONSTANTS AND MACROS (Assuming these are in link_layer.h) ---
-#define TRUE 1
-#define FALSE 0
-#define MAX_PAYLOAD_SIZE 1024 // Assuming a default max packet size
+#define MAX_FRAGMENT_SIZE (MAX_PAYLOAD_SIZE + 4)
 
 #define STUFF_BYTE 0x20
 
@@ -417,7 +414,7 @@ int llread(unsigned char *packet)
         int step = START_STEP;
         int data_index = 0;
         unsigned char control = 0;
-        unsigned char buffer[MAX_PAYLOAD_SIZE];
+        unsigned char buffer[MAX_FRAGMENT_SIZE];
         int is_duplicate = FALSE;
 
         while (step != STOP_STEP)
@@ -547,7 +544,7 @@ int llread(unsigned char *packet)
                     }
                     else
                     {
-                        if (data_index < MAX_PAYLOAD_SIZE)
+                        if (data_index < MAX_FRAGMENT_SIZE)
                         {
                             buffer[data_index++] = byte;
                         }
@@ -560,7 +557,7 @@ int llread(unsigned char *packet)
 
                 case ESCAPE_STEP:
                     byte = byte ^ STUFF_BYTE;
-                    if (data_index < MAX_PAYLOAD_SIZE)
+                    if (data_index < MAX_FRAGMENT_SIZE)
                     {
                         buffer[data_index++] = byte;
                         step = DATA_STEP;
