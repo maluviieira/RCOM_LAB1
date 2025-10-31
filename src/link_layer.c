@@ -199,7 +199,7 @@ unsigned char read_supervision_frame(unsigned char expectedA, unsigned char expe
 
     if (useTimeout)
         alarm(0);
-    return -1; // timeout/error
+    return 0; // timeout/error
 }
 
 ////////////////////////////////////////////////
@@ -280,7 +280,8 @@ int llwrite(const unsigned char *buf, int bufSize)
     if (!connection_active || serial_fd < 0)
         return -1;
 
-    // 1. Build the frame
+    // 1. Build the frame (Same as before)
+    // ... (Your frame building logic is correct and remains unchanged)
     int maxStuffedSize = 5 + (bufSize * 2) + 2;
     unsigned char *stuffedFrame = (unsigned char *)malloc(maxStuffedSize);
     if (!stuffedFrame)
@@ -306,23 +307,24 @@ int llwrite(const unsigned char *buf, int bufSize)
     // trailer
     stuffedFrame[pos++] = FLAG;
     int frameLength = pos;
+    // ... (End of frame building logic)
 
     // 2. Transmit and wait for ACK/NACK
     int bytesWritten = -1;
-    //timeoutCount = 0;
+    int attempts = 0; // The number of times we have tried to send (0 = first attempt)
     int success = FALSE;
-    int attempts = 0;
 
     // expected reply C fields
     unsigned char expected_RR_C = (curr_seq == 0) ? C_RR1 : C_RR0;
     unsigned char expected_REJ_C = (curr_seq == 0) ? C_REJ0 : C_REJ1;
+    
     // expected BCC1 for the reply frame (A=0x03)
     unsigned char expected_BCC1_RR = (curr_seq == 0) ? BCC1_RR1_r : BCC1_RR0_r;
-    unsigned char expected_BCC1_REJ = (curr_seq == 0) ? BCC1_REJ0_r : BCC1_REJ1_r;
 
     printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
 
-    while (attempts <= connection_params.nRetransmissions)
+    // Loop until successful or max attempts reached
+    while (attempts < connection_params.nRetransmissions + 1)
     {
         // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, frameLength);
@@ -334,13 +336,12 @@ int llwrite(const unsigned char *buf, int bufSize)
         printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, attempts + 1, connection_params.nRetransmissions + 1);
 
         // Wait for RR or REJ
+        // NOTE: We only look for the expected RR to simplify the state.
         unsigned char result = read_supervision_frame(A, expected_RR_C, expected_BCC1_RR, TRUE);
 
         if (result == 0)
         {
-            // A genuine timeout occurred. alarmHandler already incremented timeoutCount.
-            // Do NOT block trying to check for REJ (that could hang while channel is down).
-            // We'll retransmit in the next iteration if max not reached.
+            // Timeout occurred. (alarmHandler ran and incremented global timeoutCount for logging)
             attempts++;
             if (attempts > connection_params.nRetransmissions) break;
             printf(">>> Timeout waiting for RR-%d (attempt %d/%d)\n", (curr_seq == 0) ? 1 : 0, attempts, connection_params.nRetransmissions + 1);
@@ -350,26 +351,31 @@ int llwrite(const unsigned char *buf, int bufSize)
         // If we received something, check what it was.
         if (result == expected_RR_C)
         {
-            // ACK received
-            curr_seq = 1 - curr_seq;
+            // ACK (RR-1 for I-0, or RR-0 for I-1) received
+            curr_seq = 1 - curr_seq; // Advance sequence number
             success = TRUE;
             printf(">>> SUCCESS: I-%d acknowledged by RR-%d\n", 1 - curr_seq, curr_seq);
             break;
         }
         else if (result == expected_REJ_C)
         {
-            // REJ received -> retransmit. Increment timeoutCount (this is an attempt).
+            // REJ received -> retransmit.
             attempts++;
             if (attempts > connection_params.nRetransmissions) break;
-            printf(">>> Received REJ-%d - Retransmitting I-%d (retries so far: %d)\n", curr_seq, curr_seq, attempts);
+            printf(">>> Received REJ-%d - Retransmitting I-%d (retransmissions so far: %d)\n", (curr_seq == 0) ? 0 : 1, curr_seq, attempts);
             continue;
         }
         else
         {
-            // Unexpected supervision frame: treat as a failed attempt and retry.
+            // Unexpected supervision frame (e.g., RR for the wrong Ns, or an unexpected DISC/UA/etc.)
+            // The unexpected RR for the *current* frame (RR-0 for I-0) is implicitly a NACK.
+            // RR for wrong Ns is a soft NACK, effectively telling us the frame was received but it was a duplicate/out-of-sequence, so retransmit.
+            // RR-0 for I-0 means Rx is still expecting I-0, implying I-0 was lost or was a duplicate.
+            
+            // Treat as a failed attempt and retry.
             attempts++;
             if (attempts > connection_params.nRetransmissions) break;
-            printf(">>> Received unexpected supervision frame C=0x%02X - Retransmitting I-%d (retries so far: %d)\n", result, curr_seq, attempts);
+            printf(">>> Received unexpected supervision frame C=0x%02X - Retransmitting I-%d (retransmissions so far: %d)\n", result, curr_seq, attempts);
             continue;
         }
     }
@@ -392,7 +398,6 @@ int llwrite(const unsigned char *buf, int bufSize)
         return -1;
     }
 }
-
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
