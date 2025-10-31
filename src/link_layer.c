@@ -525,6 +525,7 @@ int llread(unsigned char *packet)
                                 // NEW frame with error - Send REJ
                                 unsigned char received_Ns = (control == C_I1) ? 1 : 0;
                                 unsigned char *rej_frame = (received_Ns == 0) ? REJ0_t : REJ1_t;
+                                printf(">>> BCC2 Error on I-%d. Sending REJ-%d.\n", received_Ns, received_Ns);
                                 writeBytesSerialPort(rej_frame, 5);
                             }
                             else
