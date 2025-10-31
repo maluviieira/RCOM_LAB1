@@ -10,7 +10,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define MAX_FRAGMENT_SIZE (MAX_PAYLOAD_SIZE + 5)
+#define MAX_FRAGMENT_SIZE (MAX_PAYLOAD_SIZE - 5)
 
 #define STUFF_BYTE 0x20
 
