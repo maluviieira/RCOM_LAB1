@@ -81,8 +81,8 @@ volatile int timeoutCount = 0;
 void alarmHandler(int signal)
 {
     timeoutFlag = 1;
-    timeoutCount++;
-    printf(">>> TIMEOUT #%d\n", timeoutCount);
+    //timeoutCount++;
+    printf(">>> TIMEOUT \n");
 }
 
 void setupAlarmHandler()
@@ -230,6 +230,8 @@ int llopen(LinkLayer connectionParameters)
             {
                 printf("Received UA - Connection established!\n");
                 connection_active = TRUE;
+                timeoutCount = 0;
+                timeoutFlag = 0;
                 return serial_fd;
             }
             else
@@ -313,6 +315,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     int bytesWritten = -1;
     int attempts = 0; // The number of times we have tried to send (0 = first attempt)
     int success = FALSE;
+    timeoutCount = 0;
 
     // expected reply C fields
     unsigned char expected_RR_C = (curr_seq == 0) ? C_RR1 : C_RR0;
