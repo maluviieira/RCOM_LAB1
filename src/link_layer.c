@@ -411,6 +411,7 @@ int llread(unsigned char *packet)
         unsigned char control = 0;
         unsigned char buffer[MAX_PAYLOAD_SIZE];
         int is_duplicate = FALSE;
+        int received_Ns = 0;
 
         while (step != STOP_STEP)
         {
@@ -460,7 +461,7 @@ int llread(unsigned char *packet)
                 case C_STEP:
                     if (byte == (A ^ control))
                     {
-                        int received_Ns = (control == C_I1) ? 1 : 0;
+                        received_Ns = (control == C_I1) ? 1 : 0;
 
                         if (received_Ns != expected_Ns)
                         {
@@ -520,17 +521,18 @@ int llread(unsigned char *packet)
                         else
                         {
                             // BCC2 INCORRECT
-                            if (!is_duplicate)
+                            if (received_Ns != expected_Ns)
                             {
                                 // NEW frame with error - Send REJ
-                                unsigned char received_Ns = (control == C_I1) ? 1 : 0;
+                                printf(">>> BCC2 Error on I-%d for new frame. Sending REJ-%d.\n", received_Ns, received_Ns);
+                                received_Ns = (control == C_I1) ? 1 : 0;
                                 unsigned char *rej_frame = (received_Ns == 0) ? REJ0_t : REJ1_t;
-                                printf(">>> BCC2 Error on I-%d. Sending REJ-%d.\n", received_Ns, received_Ns);
                                 writeBytesSerialPort(rej_frame, 5);
                             }
                             else
                             {
                                 // DUPLICATE frame with error - Send RR
+                                printf(">>> BCC2 Error on I-%d for duplicate frame. Sending REJ-%d.\n", received_Ns, received_Ns);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
                                 printf("Duplicate\n");
