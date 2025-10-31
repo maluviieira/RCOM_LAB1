@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define PACKET_SIZE 5
+#define MAX_DATA_FIELD_SIZE (MAX_PAYLOAD_SIZE - 4)
 
 #define CONTROL_START 1
 #define CONTROL_END 3
@@ -16,8 +16,6 @@
 
 #define FILE_SIZE 0
 #define FILE_NAME 1
-
-#define PACKET_DATA_SIZE 512
 
 int createControlPacket(unsigned char *packet, const char *filename, long fileSize, int control)
 {
@@ -137,7 +135,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         unsigned char buffer[MAX_PAYLOAD_SIZE];
         int seq = 0, bytesRead;
 
-        while ((bytesRead = fread(buffer, 1, MAX_PAYLOAD_SIZE, file)) > 0)
+        while ((bytesRead = fread(buffer, 1, MAX_DATA_FIELD_SIZE, file)) > 0)
         {
             int packetSize = 4 + bytesRead; // C + N + L2 + L1 + data
             unsigned char *dataPacket = malloc(packetSize);
