@@ -332,6 +332,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     while (timeoutCount < connection_params.nRetransmissions)
     {
+        // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, frameLength);
         if (bytesWritten < 0)
         {
@@ -340,88 +341,40 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
         printf(">>> Sent I-%d (attempt %d/%d)\n", curr_seq, timeoutCount + 1, connection_params.nRetransmissions);
 
-        timeoutFlag = 0;
-        alarm(connection_params.timeout);
+        // Wait for RR or REJ (first try waiting for RR with timeout).
+        unsigned char result = read_supervision_frame(A, expected_RR_C, expected_BCC1_RR, TRUE);
 
-        int step = START_STEP;
-        int received_reply = FALSE;
-
-        while (!timeoutFlag && !received_reply)
+        if (result == 0)
         {
-            unsigned char byte;
-            int bytesRead = readByteSerialPort(&byte);
-            if (bytesRead <= 0)
-                continue;
-
-            switch (step)
-            {
-            case START_STEP:
-                if (byte == FLAG)
-                    step = FLAG_STEP;
-                break;
-            case FLAG_STEP:
-                if (byte == A)
-                    step = A_STEP;
-                else if (byte != FLAG)
-                    step = START_STEP;
-                break;
-            case A_STEP:
-                if (byte == expected_RR_C || byte == expected_REJ_C)
-                {
-                    step = C_STEP; // Move to next step if it's a valid RR or REJ
-                }
-                else if (byte == FLAG)
-                {
-                    step = FLAG_STEP;
-                }
-                else
-                {
-                    step = START_STEP;
-                }
-                break;
-            case C_STEP:
-                // This state is effectively skipped as we check C in A_STEP
-                // and BCC1 validation is complex here. We assume if C is correct,
-                // the frame is likely valid for this simple check.
-                // A full implementation would check BCC1 here.
-                step = BCC1_STEP;
-                break;
-            case BCC1_STEP:
-                if (byte == FLAG)
-                {
-                    alarm(0);                                   // Disable alarm
-                    unsigned char received_C = stuffedFrame[2]; // Get the C from the previous state machine step
-
-                    if (stuffedFrame[2] == expected_RR_C)
-                    {
-                        curr_seq = 1 - curr_seq;
-                        success = TRUE;
-                        printf(">>> SUCCESS: I-%d acknowledged by RR-%d\n", 1 - curr_seq, curr_seq);
-                    }
-                    else if (stuffedFrame[2] == expected_REJ_C)
-                    {
-                        printf(">>> Received REJ-%d. Retransmitting immediately.\n", 1 - curr_seq);
-                        // No need to increment timeoutCount here, just re-send
-                    }
-                    received_reply = TRUE;
-                }
-                else
-                {
-                    step = START_STEP;
-                }
-                break;
-            }
+            printf(">>> Timeout waiting for RR-%d (attempt %d/%d)\n", (curr_seq == 0) ? 1 : 0, timeoutCount, connection_params.nRetransmissions);
+            continue;
         }
 
-        if (success)
-            break; // Exit the main retransmission loop
-
-        if (timeoutFlag)
+        // If we received something, check what it was.
+        else if (result == expected_RR_C)
         {
-            printf(">>> Timeout waiting for reply to I-%d (attempt %d/%d)\n", curr_seq, timeoutCount, connection_params.nRetransmissions);
+            // ACK received
+            curr_seq = 1 - curr_seq;
+            success = TRUE;
+            printf(">>> SUCCESS: I-%d acknowledged by RR-%d\n", 1 - curr_seq, curr_seq);
+            break;
+        }
+        else if (result == expected_REJ_C)
+        {
+            // REJ received -> retransmit. Increment timeoutCount (this is an attempt).
+            timeoutCount++;
+            printf(">>> Received REJ-%d - Retransmitting I-%d (retries so far: %d)\n", curr_seq, curr_seq, timeoutCount);
+            continue;
+        }
+        else
+        {
+            // Unexpected supervision frame: treat as a failed attempt and retry.
+            timeoutCount++;
+            printf(">>> Received unexpected supervision frame C=0x%02X - Retransmitting I-%d (retries so far: %d)\n", result, curr_seq, timeoutCount);
+            continue;
         }
     }
-    
+
     free(stuffedFrame);
 
     if (success)
@@ -645,7 +598,7 @@ int llclose()
             if (read_supervision_frame(A_Rt, C_DISC, BCC1_DISC_t, TRUE))
             {
                 printf("Tx received DISC reply.\n");
-
+                
                 // 3. Send final UA
                 writeBytesSerialPort(UA_reply, 5);
                 printf("Tx sent final UA.\n");
