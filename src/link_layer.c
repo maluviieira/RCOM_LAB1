@@ -521,7 +521,7 @@ int llread(unsigned char *packet)
                         else
                         {
                             // BCC2 INCORRECT
-                            if (received_Ns != expected_Ns)
+                            if (received_Ns == expected_Ns)
                             {
                                 // NEW frame with error - Send REJ
                                 printf(">>> BCC2 Error on I-%d for new frame. Sending REJ-%d.\n", received_Ns, received_Ns);
@@ -532,10 +532,9 @@ int llread(unsigned char *packet)
                             else
                             {
                                 // DUPLICATE frame with error - Send RR
-                                printf(">>> BCC2 Error on I-%d for duplicate frame. Sending REJ-%d.\n", received_Ns, received_Ns);
+                                printf(">>> BCC2 Error on I-%d for duplicate frame. Sending RR-%d.\n", received_Ns, received_Ns);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
-                                printf("Duplicate\n");
                             }
                             step = START_STEP;
                         }
