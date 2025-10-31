@@ -68,6 +68,7 @@ unsigned char REJ0_t[5] = {FLAG, A, C_REJ0, BCC1_REJ0_r, FLAG};
 unsigned char REJ1_t[5] = {FLAG, A, C_REJ1, BCC1_REJ1_r, FLAG};
 
 volatile int curr_seq = 0;
+static int expected_Ns = 0;
 volatile int connection_active = FALSE;
 static int serial_fd = -1;
 
@@ -222,6 +223,9 @@ unsigned char read_supervision_frame(unsigned char expectedA, unsigned char expe
 int llopen(LinkLayer connectionParameters)
 {
     connection_params = connectionParameters;
+
+    curr_seq = 0;
+    expected_Ns = 0;
 
     // FIX 1: Set up the alarm handler once
     setupAlarmHandler();
@@ -404,8 +408,6 @@ int llread(unsigned char *packet)
 {
     if (!connection_active || serial_fd < 0)
         return -1;
-
-    static int expected_Ns = 0;
 
     while (TRUE)
     {
@@ -599,7 +601,7 @@ int llclose()
             if (read_supervision_frame(A_Rt, C_DISC, BCC1_DISC_t, TRUE))
             {
                 printf("Tx received DISC reply.\n");
-                
+
                 // 3. Send final UA
                 writeBytesSerialPort(UA_reply, 5);
                 printf("Tx sent final UA.\n");
