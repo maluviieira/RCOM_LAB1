@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define MAX_DATA_FIELD_SIZE (MAX_PAYLOAD_SIZE - 4)
+#define MAX_DATA_FIELD_SIZE 996
 
 #define CONTROL_START 1
 #define CONTROL_END 3
@@ -132,8 +132,9 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         free(startPacket);
 
         // 2. send data packets
-        unsigned char buffer[MAX_PAYLOAD_SIZE];
-        int seq = 0, bytesRead;
+        unsigned char buffer[MAX_DATA_FIELD_SIZE];
+        int seq = 0;
+        int bytesRead;
 
         while ((bytesRead = fread(buffer, 1, MAX_DATA_FIELD_SIZE, file)) > 0)
         {
@@ -179,7 +180,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     else
     {
         // Receiver code remains unchanged...
-        unsigned char packet[MAX_PAYLOAD_SIZE];
+        unsigned char packet[MAX_DATA_FIELD_SIZE];
         char recvFilename[256];
         long recvFileSize = 0;
         FILE *output = NULL;
