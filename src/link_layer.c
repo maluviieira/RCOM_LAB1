@@ -76,12 +76,21 @@ LinkLayer connection_params;
 volatile int timeoutFlag = 0;
 volatile int timeoutCount = 0;
 
+// --- STATISTICS COUNTERS ---
+static int I_frames_sent = 0;
+static int I_frames_received = 0;
+static int timeouts = 0;
+static int retransmissions = 0; // I-frames re-sent due to timeout or REJ
+static int RR_sent_rx = 0;      // RRs sent by the Receiver
+static int REJ_sent_rx = 0;     // REJs sent by the Receiver
+
 // --- HELPER FUNCTIONS ---
 
 void alarmHandler(int signal)
 {
     timeoutFlag = 1;
     timeoutCount++;
+    timeouts++;
     printf(">>> TIMEOUT #%d - No response received\n", timeoutCount);
 }
 
@@ -119,6 +128,26 @@ unsigned char BCC2(const unsigned char *data, int size)
         bcc ^= data[i];
     }
     return bcc;
+}
+
+void print_statistics()
+{
+    printf("\n--- PROTOCOL STATISTICS ---\n");
+    if (connection_params.role == LlTx)
+    {
+        printf("Role: Transmitter\n");
+        printf("I-Frames Sent: %d\n", I_frames_sent);
+        printf("Retransmissions (due to timeout/REJ): %d\n", retransmissions);
+        printf("Timeouts Triggered: %d\n", timeouts);
+    }
+    else
+    {
+        printf("Role: Receiver\n");
+        printf("I-Frames Received (and accepted): %d\n", I_frames_received);
+        printf("RR Replies Sent: %d\n", RR_sent_rx);
+        printf("REJ Replies Sent: %d\n", REJ_sent_rx);
+    }
+    printf("---------------------------\n");
 }
 
 /**
@@ -326,14 +355,18 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned char expected_REJ_C = (curr_seq == 0) ? C_REJ0 : C_REJ1;
     // Determine the expected BCC1 for the reply frame (A=0x03)
     unsigned char expected_BCC1_RR = (curr_seq == 0) ? BCC1_RR1_r : BCC1_RR0_r;
-    //unsigned char expected_BCC1_REJ = (curr_seq == 0) ? BCC1_REJ0_r : BCC1_REJ1_r;
+    // unsigned char expected_BCC1_REJ = (curr_seq == 0) ? BCC1_REJ0_r : BCC1_REJ1_r;
 
     printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
 
     while (timeoutCount < connection_params.nRetransmissions)
     {
+        if (timeoutCount > 0)
+            retransmissions++;
+
         // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, frameLength);
+        I_frames_sent++;
         if (bytesWritten < 0)
         {
             free(stuffedFrame);
@@ -501,10 +534,13 @@ int llread(unsigned char *packet)
                             if (received_Ns == expected_Ns)
                             {
                                 // NEW frame - Accept data and send RR for next seq
+                                I_frames_received++;
                                 printf(">>> Received new frame. Sending RR-%d.\n", received_Ns);
                                 memcpy(packet, buffer, data_size);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR1_t : RR0_t;
                                 writeBytesSerialPort(rr_frame, 5);
+                                RR_sent_rx++;
+
                                 expected_Ns = 1 - expected_Ns;
                                 return data_size;
                             }
@@ -514,6 +550,8 @@ int llread(unsigned char *packet)
                                 printf(">>> Received duplicate frame. Sending RR-%d.\n", received_Ns);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
+                                RR_sent_rx++;
+
                                 step = START_STEP;
                             }
                         }
@@ -527,6 +565,7 @@ int llread(unsigned char *packet)
                                 received_Ns = (control == C_I1) ? 1 : 0;
                                 unsigned char *rej_frame = (received_Ns == 0) ? REJ0_t : REJ1_t;
                                 writeBytesSerialPort(rej_frame, 5);
+                                REJ_sent_rx++;
                             }
                             else
                             {
@@ -534,6 +573,7 @@ int llread(unsigned char *packet)
                                 printf(">>> BCC2 Error on I-%d for duplicate frame. Sending RR-%d.\n", received_Ns, received_Ns);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
+                                RR_sent_rx++;
                             }
                             step = START_STEP;
                         }
@@ -597,7 +637,7 @@ int llclose()
             if (read_supervision_frame(A_Rt, C_DISC, BCC1_DISC_t, TRUE))
             {
                 printf("Tx received DISC reply.\n");
-                
+
                 // 3. Send final UA
                 writeBytesSerialPort(UA_reply, 5);
                 printf("Tx sent final UA.\n");
@@ -636,6 +676,8 @@ int llclose()
             }
         }
     }
+
+    print_statistics();
 
     return tx_success ? 0 : -1;
 }
