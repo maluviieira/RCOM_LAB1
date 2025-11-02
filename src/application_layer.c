@@ -101,6 +101,8 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     if (ll.role == LlTx)
     {
+        printf("\n------ DATA LOADING ------\n");
+
         FILE *file = fopen(filename, "rb");
         if (!file)
         {
@@ -176,6 +178,8 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     }
     else
     {
+        printf("\n------ DATA LOADING ------\n");
+
         // Receiver code remains unchanged...
         unsigned char packet[MAX_PAYLOAD_SIZE];
         char recvFilename[256];

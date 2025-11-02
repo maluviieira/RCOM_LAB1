@@ -216,6 +216,8 @@ int llopen(LinkLayer connectionParameters)
 
     if (connectionParameters.role == LlTx)
     {
+        printf("\n------ ESTABLISHMENT ------\n");
+
         serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
         if (serial_fd < 0)
             return -1;
@@ -245,6 +247,8 @@ int llopen(LinkLayer connectionParameters)
     }
     else // LlRx
     {
+        printf("\n------ ESTABLISHMENT ------\n");
+
         serial_fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
         if (serial_fd < 0)
             return -1;
@@ -570,6 +574,8 @@ int llclose()
 
     if (connection_params.role == LlTx)
     {
+        printf("\n------ TERMINATION ------\n");
+
         while (timeoutCount <= connection_params.nRetransmissions)
         {
             // 1. send DISC frame
@@ -599,6 +605,8 @@ int llclose()
     }
     else // LlRx
     {
+        printf("\n------ TERMINATION ------\n");
+
         // 1. read DISC
         if (read_supervision_frame(A, C_DISC, BCC1_DISC, FALSE))
         {
