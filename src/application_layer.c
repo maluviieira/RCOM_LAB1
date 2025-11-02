@@ -94,10 +94,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     ll.timeout = timeout;
 
     if (llopen(ll) < 0)
-    {
-        printf("Connection failed!\n");
         return;
-    }
 
     if (ll.role == LlTx)
     {

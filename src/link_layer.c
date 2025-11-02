@@ -81,7 +81,6 @@ void alarmHandler(int signal)
 {
     timeoutFlag = 1;
     timeoutCount++;
-    printf(">>> TIMEOUT #%d - No response received\n", timeoutCount);
 }
 
 void setupAlarmHandler()
@@ -320,8 +319,6 @@ int llwrite(const unsigned char *buf, int bufSize)
     // determine the expected BCC1 for the reply frame (A=0x03)
     unsigned char expected_BCC1_RR = (curr_seq == 0) ? BCC1_RR1_r : BCC1_RR0_r;
 
-    printf("=== LLWRITE STARTING for I-%d, %d bytes ===\n", curr_seq, bufSize);
-
     while (timeoutCount < connection_params.nRetransmissions)
     {
         // send the frame
@@ -488,7 +485,7 @@ int llread(unsigned char *packet)
                             if (received_Ns == expected_Ns)
                             {
                                 // NEW frame - accept data and send RR for next seq
-                                printf(">>> Received new frame. Sending RR-%d.\n", received_Ns);
+                                printf(">>> Received new frame. Sending RR-%d.\n", received_Ns == 0 ? 1 : 0);
                                 memcpy(packet, buffer, data_size);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR1_t : RR0_t;
                                 writeBytesSerialPort(rr_frame, 5);
@@ -498,7 +495,7 @@ int llread(unsigned char *packet)
                             else
                             {
                                 // DUPLICATE frame - Discard data and send RR for current expected seq
-                                printf(">>> Received duplicate frame. Sending RR-%d.\n", received_Ns);
+                                printf(">>> Received duplicate frame. Sending RR-%d.\n", received_Ns == 0 ? 1 : 0);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
                                 step = START_STEP;
