@@ -143,7 +143,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
             if (llwrite(dataPacket, packetSize) < 0)
             {
-                printf("DATA packet #%d transmission failed after max retransmissions. Closing.\n", seq);
+                printf("DATA packet #%d transmission failed after max retransmissions.\n", seq);
                 free(dataPacket);
                 fclose(file);
                 llclose();
