@@ -1,5 +1,5 @@
 // MISC
-#define _POSIX_SOURCE 1
+#define _XOPEN_SOURCE 500 //for usleep
 
 #include "link_layer.h"
 #include "serial_port.h"
@@ -518,10 +518,43 @@ int llread(unsigned char *packet)
                             // BCC2 CORRECT
                             if (received_Ns == expected_Ns)
                             {
-                                // NEW frame - Accept data and send RR for next seq
+                                // --- START OF FER SIMULATION BLOCK ---
+                                
+                                char *fer_bcc1_str = getenv("FER_BCC1"); // Simulates header error
+                                char *fer_bcc2_str = getenv("FER_BCC2"); // Simulates data error
+                                int fer_bcc1 = (fer_bcc1_str != NULL) ? atoi(fer_bcc1_str) : 0;
+                                int fer_bcc2 = (fer_bcc2_str != NULL) ? atoi(fer_bcc2_str) : 0;
+
+                                // 1. Simulate a BCC1 (header) error -> frame is "lost"
+                                if (fer_bcc1 > 0 && (rand() % 100 < fer_bcc1)) {
+                                    printf("\n--- SIMULATED BCC1 ERROR (Frame Ignored) ---\n");
+                                    step = START_STEP; // Ignore frame and start over
+                                    continue;          // Skip the rest of the loop
+                                }
+
+                                // 2. Simulate a BCC2 (data) error -> receiver sends REJ
+                                if (fer_bcc2 > 0 && (rand() % 100 < fer_bcc2)) {
+                                    printf("\n--- SIMULATED BCC2 ERROR (Sending REJ) ---\n");
+                                    goto handle_bcc2_error; // Jump to the BCC2 error logic
+                                }
+                                // --- END OF FER SIMULATION BLOCK ---
+
+
+                                // NEW frame - Accept data and send RR
                                 I_frames_received++;
                                 printf(">>> Received new frame. Sending RR-%d.\n", received_Ns == 0 ? 1 : 0);
                                 memcpy(packet, buffer, data_size);
+                                
+                                // T_prop delay simulation
+                                char *t_prop_str = getenv("T_PROP");
+                                if (t_prop_str != NULL) {
+                                    int delay_us = atoi(t_prop_str);
+                                    if(delay_us > 0) {
+                                        printf("--- SIMULATING T_prop DELAY of %d us ---\n", delay_us);
+                                        usleep(delay_us); // Delay in microseconds
+                                    }
+                                }
+
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR1_t : RR0_t;
                                 writeBytesSerialPort(rr_frame, 5);
                                 RR_sent_rx++;
@@ -542,6 +575,7 @@ int llread(unsigned char *packet)
                         }
                         else
                         {
+                        handle_bcc2_error:
                             // BCC2 INCORRECT
                             if (received_Ns == expected_Ns)
                             {
