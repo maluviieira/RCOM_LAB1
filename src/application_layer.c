@@ -108,6 +108,8 @@ void printEfficiencyReport(const struct timespec *start_time, const struct times
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
 {
+    srand(time(NULL)); // needed for the (FER) error simulation
+
     LinkLayer ll;
 
     ll.role = strcmp(role, "rx") ? LlTx : LlRx;
@@ -155,7 +157,23 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         unsigned char buffer[MAX_PAYLOAD_SIZE];
         int seq = 0, bytesRead;
 
-        while ((bytesRead = fread(buffer, 1, MAX_PAYLOAD_SIZE - 5, file)) > 0)
+        // --- Logic to vary L ---
+        int maxDataFragmentSize = MAX_PAYLOAD_SIZE - 5; // Default L = 995 bytes
+
+        // Read the L_SIZE environment variable
+        char *l_size_str = getenv("L_SIZE");
+        if (l_size_str != NULL) {
+            int requested_l = atoi(l_size_str);
+            // Ensure the requested L is valid ( > 0 and <= 995)
+            if (requested_l > 0 && requested_l <= (MAX_PAYLOAD_SIZE - 5)) {
+                maxDataFragmentSize = requested_l;
+            }
+        }
+        printf("Configured Data Fragment Size (L): %d bytes\n", maxDataFragmentSize);
+        // --- END OF Logic to vary L ---
+
+        
+        while ((bytesRead = fread(buffer, 1, maxDataFragmentSize, file)) > 0)
         {
             int packetSize = 4 + bytesRead; // C + N + L2 + L1 + data
             unsigned char *dataPacket = malloc(packetSize);
@@ -245,7 +263,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             else if (packet[0] == CONTROL_END)
             {
                 clock_gettime(CLOCK_MONOTONIC, &end_time);
-
+                
                 printf("END packet received. Transfer complete.\n");
                 if (output)
                     fclose(output);
