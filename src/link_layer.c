@@ -1,5 +1,5 @@
 // MISC
-#define _POSIX_SOURCE 1
+#define _XOPEN_SOURCE 500 //for usleep
 
 #include "link_layer.h"
 #include "serial_port.h"
@@ -75,12 +75,21 @@ LinkLayer connection_params;
 volatile int timeoutFlag = 0;
 volatile int timeoutCount = 0;
 
+// --- STATISTICS COUNTERS ---
+static int I_frames_sent = 0;
+static int I_frames_received = 0;
+static int timeouts = 0;
+static int retransmissions = 0; // I-frames re-sent due to timeout or REJ
+static int RR_sent_rx = 0;      // RRs sent by the Receiver
+static int REJ_sent_rx = 0;     // REJs sent by the Receiver
+
 // --- HELPER FUNCTIONS ---
 
 void alarmHandler(int signal)
 {
     timeoutFlag = 1;
     timeoutCount++;
+    timeouts++;
 }
 
 void setupAlarmHandler()
@@ -118,6 +127,27 @@ unsigned char BCC2(const unsigned char *data, int size)
     }
     return bcc;
 }
+
+void print_statistics()
+{
+    printf("\n--- PROTOCOL STATISTICS ---\n");
+    if (connection_params.role == LlTx)
+    {
+        printf("Role: Transmitter\n");
+        printf("I-Frames Sent: %d\n", I_frames_sent);
+        printf("Retransmissions (due to timeout/REJ): %d\n", retransmissions);
+        printf("Timeouts Triggered: %d\n", timeouts);
+    }
+    else
+    {
+        printf("Role: Receiver\n");
+        printf("I-Frames Received (and accepted): %d\n", I_frames_received);
+        printf("RR Replies Sent: %d\n", RR_sent_rx);
+        printf("REJ Replies Sent: %d\n", REJ_sent_rx);
+    }
+    printf("---------------------------\n");
+}
+
 
 unsigned char read_supervision_frame(unsigned char expectedA, unsigned char expectedC, unsigned char expectedBCC1, int useTimeout)
 {
@@ -321,8 +351,12 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     while (timeoutCount < connection_params.nRetransmissions)
     {
-        // send the frame
+        if (timeoutCount > 0)
+            retransmissions++;
+
+        // Send the frame
         bytesWritten = writeBytesSerialPort(stuffedFrame, frameLength);
+        I_frames_sent++;
         if (bytesWritten < 0)
         {
             free(stuffedFrame);
@@ -484,11 +518,47 @@ int llread(unsigned char *packet)
                             // BCC2 CORRECT
                             if (received_Ns == expected_Ns)
                             {
-                                // NEW frame - accept data and send RR for next seq
+                                // --- START OF FER SIMULATION BLOCK ---
+                                
+                                char *fer_bcc1_str = getenv("FER_BCC1"); // Simulates header error
+                                char *fer_bcc2_str = getenv("FER_BCC2"); // Simulates data error
+                                int fer_bcc1 = (fer_bcc1_str != NULL) ? atoi(fer_bcc1_str) : 0;
+                                int fer_bcc2 = (fer_bcc2_str != NULL) ? atoi(fer_bcc2_str) : 0;
+
+                                // 1. Simulate a BCC1 (header) error -> frame is "lost"
+                                if (fer_bcc1 > 0 && (rand() % 100 < fer_bcc1)) {
+                                    printf("\n--- SIMULATED BCC1 ERROR (Frame Ignored) ---\n");
+                                    step = START_STEP; // Ignore frame and start over
+                                    continue;          // Skip the rest of the loop
+                                }
+
+                                // 2. Simulate a BCC2 (data) error -> receiver sends REJ
+                                if (fer_bcc2 > 0 && (rand() % 100 < fer_bcc2)) {
+                                    printf("\n--- SIMULATED BCC2 ERROR (Sending REJ) ---\n");
+                                    goto handle_bcc2_error; // Jump to the BCC2 error logic
+                                }
+                                // --- END OF FER SIMULATION BLOCK ---
+
+
+                                // NEW frame - Accept data and send RR
+                                I_frames_received++;
                                 printf(">>> Received new frame. Sending RR-%d.\n", received_Ns == 0 ? 1 : 0);
                                 memcpy(packet, buffer, data_size);
+                                
+                                // T_prop delay simulation
+                                char *t_prop_str = getenv("T_PROP");
+                                if (t_prop_str != NULL) {
+                                    int delay_us = atoi(t_prop_str);
+                                    if(delay_us > 0) {
+                                        printf("--- SIMULATING T_prop DELAY of %d us ---\n", delay_us);
+                                        usleep(delay_us); // Delay in microseconds
+                                    }
+                                }
+
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR1_t : RR0_t;
                                 writeBytesSerialPort(rr_frame, 5);
+                                RR_sent_rx++;
+
                                 expected_Ns = 1 - expected_Ns;
                                 return data_size;
                             }
@@ -498,11 +568,14 @@ int llread(unsigned char *packet)
                                 printf(">>> Received duplicate frame. Sending RR-%d.\n", received_Ns == 0 ? 1 : 0);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
+                                RR_sent_rx++;
+
                                 step = START_STEP;
                             }
                         }
                         else
                         {
+                        handle_bcc2_error:
                             // BCC2 INCORRECT
                             if (received_Ns == expected_Ns)
                             {
@@ -511,6 +584,7 @@ int llread(unsigned char *packet)
                                 received_Ns = (control == C_I1) ? 1 : 0;
                                 unsigned char *rej_frame = (received_Ns == 0) ? REJ0_t : REJ1_t;
                                 writeBytesSerialPort(rej_frame, 5);
+                                REJ_sent_rx++;
                             }
                             else
                             {
@@ -518,6 +592,7 @@ int llread(unsigned char *packet)
                                 printf(">>> BCC2 Error on I-%d for duplicate frame. Sending RR-%d.\n", received_Ns, received_Ns);
                                 unsigned char *rr_frame = (expected_Ns == 0) ? RR0_t : RR1_t;
                                 writeBytesSerialPort(rr_frame, 5);
+                                RR_sent_rx++;
                             }
                             step = START_STEP;
                         }
@@ -624,6 +699,8 @@ int llclose()
             }
         }
     }
+
+    print_statistics();
 
     return tx_success ? 0 : -1;
 }
