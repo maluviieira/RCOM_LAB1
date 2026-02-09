@@ -120,7 +120,15 @@ Run `make` without arguments to inspect available targets.
 - If the pseudo-terminals differ from `/dev/ttyS10` or `/dev/ttyS11`, use the printed device names from the cable program.
 - Use `strace` or `gdb` for low-level debugging of the binaries if they crash.
 
-## Contact / Notes
+## Development Team
 
-This repository is for lab exercises. Do not modify the `cable/` program unless instructed. If you need help, ask your instructor or open an issue in your course repo.
+This project was developed by:
 
+- [Francisca Portugal](https://github.com/franpts2)
+- [Maria Luiza Vieira](https://github.com/maluviieira)
+
+**Disclaimer**: This team developed only part of the code in the /src folder. The rest was given to us by our professors at FEUP.
+
+## Course Information
+
+Developed for the RCOM (Computer Networks) course at FEUP (Faculty of Engineering, University of Porto).
