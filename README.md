@@ -1,4 +1,4 @@
-# seriallink - Serial Port Protocol
+# serial link - Serial Port Protocol
 
 This repository contains an implementation of a simple serial-port-based file transfer protocol. The project includes:
 
