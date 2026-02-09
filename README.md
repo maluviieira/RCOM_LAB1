@@ -1,6 +1,6 @@
 # seriallink - Serial Port Protocol
 
-This repository contains an implementation of a simple serial-port-based file transfer protocol used for teaching link-layer concepts (framing, error detection, retransmission). The project includes:
+This repository contains an implementation of a simple serial-port-based file transfer protocol. The project includes:
 
 - A transmitter/receiver program (`bin/main`) that implements the link-layer and application-layer code.
 - A virtual cable program (`cable/`) that simulates a serial connection and can inject disconnections and noise for testing.
