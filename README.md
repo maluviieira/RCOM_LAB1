@@ -1,4 +1,4 @@
-# seriallink- Serial Port Protocol
+# seriallink - Serial Port Protocol
 
 This repository contains an implementation of a simple serial-port-based file transfer protocol used for teaching link-layer concepts (framing, error detection, retransmission). The project includes:
 
